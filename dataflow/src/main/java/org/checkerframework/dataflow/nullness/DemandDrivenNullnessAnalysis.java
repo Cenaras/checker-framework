@@ -271,9 +271,9 @@ public final class DemandDrivenNullnessAnalysis {
   /** Applies the backwards transfer for a node. */
   private PropositionalFormula transfer(Node node, PropositionalFormula formula) {
     if (node instanceof AssignmentNode assignment) {
-      Reference target = reference(assignment.getTarget());
-      if (target != null) {
-        return substituteAssignment(formula, target, assignment.getExpression());
+      Reference lhsReference = reference(assignment.getTarget());
+      if (lhsReference != null) {
+        return substituteAssignment(formula, lhsReference, assignment.getExpression());
       }
     }
     if (isPotentiallySideEffectingCall(node)) {
@@ -288,10 +288,11 @@ public final class DemandDrivenNullnessAnalysis {
       return TRUE;
     }
 
-    boolean thenEdge = conditional.getThenSuccessor() == successor;
-    boolean elseEdge = conditional.getElseSuccessor() == successor;
+    Block thenSuccessor = conditional.getThenSuccessor();
+    Block elseSuccessor = conditional.getElseSuccessor();
+
     // Can this even happen?
-    if (thenEdge == elseEdge) {
+    if (thenSuccessor == elseSuccessor) {
       return TRUE;
     }
 
@@ -305,8 +306,8 @@ public final class DemandDrivenNullnessAnalysis {
     Node condition = conditionBlock.getLastNode();
     assert (condition != null);
 
-    PropositionalFormula result = booleanFormula(condition);
-    return thenEdge ? result : not(result);
+    PropositionalFormula conditionFormula = booleanFormula(condition);
+    return thenSuccessor == successor ? conditionFormula : not(conditionFormula);
   }
 
   /** Substitutes the value assigned to {@code target} into a backwards path formula. */
@@ -335,24 +336,25 @@ public final class DemandDrivenNullnessAnalysis {
     if (atomReference.equals(lhsTargetReference)) {
       // The property key states which fact we are asking about the atom (x is null, b == true)
       // Construct the appropriate formula for the RHS: Is the variable null? Does the boolean evaluate to true?
-      return propertyAtom.predicateKind == PredicateKind.IS_NULL
-          ? nullnessFormula(rhsExpression)
-          : booleanFormula(rhsExpression);
+      return switch (propertyAtom.predicateKind) {
+        case IS_NULL -> nullnessFormula(rhsExpression);
+        case IS_TRUE -> booleanFormula(rhsExpression);
+      };
     }
 
     // For chained dereferences: a.b.foo(). We ask Null(a.b). If we encounter var a = h, then
     // the atom reference (a.b) contains the lhs (a) of the assignment.
-    if (atomReference.contains(lhsTargetReference)) {
-      // If the RHS is an unknown reference (e.g., non-variable, field, or this), reset the formula
+    if (atomReference.containsSubreference(lhsTargetReference)) {
+      // If the RHS is an unknown reference (e.g., non-variable, field, or this), forget the previous fact.
       if (rhsReference == null) {
         return freshAtom();
       }
       // Else it was a reference supported: Substitute to check for (local) aliasing.
-      Reference rewritten = atomReference.replace(lhsTargetReference, rhsReference);
+      Reference rewritten = atomReference.replaceSubreferenceWith(lhsTargetReference, rhsReference);
       return atom(new PropertyKey(propertyAtom.predicateKind, rewritten));
     }
 
-    if (lhsTargetReference instanceof FieldReference && atomReference.hasField()) {
+    if (lhsTargetReference instanceof FieldReference && atomReference.containsFieldAccess()) {
       // Receiver aliasing is not tracked for arbitrary field writes.
       return freshAtom();
     }
@@ -366,7 +368,7 @@ public final class DemandDrivenNullnessAnalysis {
     return substitute(
         formula,
         key -> {
-          if (key instanceof PropertyKey propertyKey && propertyKey.reference.hasField()) {
+          if (key instanceof PropertyKey propertyKey && propertyKey.reference.containsFieldAccess()) {
             return replacements.computeIfAbsent(key, unused -> freshAtom());
           }
           return atom(key);
@@ -515,27 +517,27 @@ public final class DemandDrivenNullnessAnalysis {
   }
 
   private interface Reference {
-    boolean contains(Reference other);
+    boolean containsSubreference(Reference other);
 
-    Reference replace(Reference from, Reference to);
+    Reference replaceSubreferenceWith(Reference from, Reference to);
 
-    boolean hasField();
+    boolean containsFieldAccess();
   }
 
   private record VariableReference(VariableElement element) implements Reference {
     @Override
-    public boolean contains(Reference other) {
+    public boolean containsSubreference(Reference other) {
       return equals(other);
     }
 
     @Override
-    public Reference replace(Reference from, Reference to) {
+    public Reference replaceSubreferenceWith(Reference from, Reference to) {
       assert equals(from);
       return to;
     }
 
     @Override
-    public boolean hasField() {
+    public boolean containsFieldAccess() {
       return false;
     }
   }
@@ -544,18 +546,18 @@ public final class DemandDrivenNullnessAnalysis {
     INSTANCE;
 
     @Override
-    public boolean contains(Reference other) {
+    public boolean containsSubreference(Reference other) {
       return this == other;
     }
 
     @Override
-    public Reference replace(Reference from, Reference to) {
+    public Reference replaceSubreferenceWith(Reference from, Reference to) {
       assert this == from;
       return to;
     }
 
     @Override
-    public boolean hasField() {
+    public boolean containsFieldAccess() {
       return false;
     }
   }
@@ -563,21 +565,21 @@ public final class DemandDrivenNullnessAnalysis {
   private record FieldReference(@Nullable Reference receiver, VariableElement field)
       implements Reference {
     @Override
-    public boolean contains(Reference other) {
-      return equals(other) || (receiver != null && receiver.contains(other));
+    public boolean containsSubreference(Reference other) {
+      return equals(other) || (receiver != null && receiver.containsSubreference(other));
     }
 
     @Override
-    public Reference replace(Reference from, Reference to) {
+    public Reference replaceSubreferenceWith(Reference from, Reference to) {
       if (equals(from)) {
         return to;
       }
-      assert receiver != null && receiver.contains(from);
-      return new FieldReference(receiver.replace(from, to), field);
+      assert receiver != null && receiver.containsSubreference(from);
+      return new FieldReference(receiver.replaceSubreferenceWith(from, to), field);
     }
 
     @Override
-    public boolean hasField() {
+    public boolean containsFieldAccess() {
       return true;
     }
   }
