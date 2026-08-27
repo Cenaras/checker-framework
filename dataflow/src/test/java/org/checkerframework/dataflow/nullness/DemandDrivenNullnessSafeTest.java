@@ -15,6 +15,11 @@ public class DemandDrivenNullnessSafeTest extends DemandDrivenNullnessTestSuppor
   }
 
   @Test
+  public void guardReturns() throws URISyntaxException {
+    assertSafe("guardReturns", "foo");
+  }
+
+  @Test
   public void booleanFromNullCheck() throws URISyntaxException {
     assertSafe("booleanFromNullCheck", "toLowerCase");
   }
@@ -53,6 +58,45 @@ public class DemandDrivenNullnessSafeTest extends DemandDrivenNullnessTestSuppor
   public void fieldControlFlow() throws URISyntaxException {
     assertSafe("fieldControlFlow", "isDone");
   }
+
+  @Test
+  public void negatedDisjunction() throws URISyntaxException {
+    assertSafe("negatedDisjunction", "foo");
+  }
+
+  @Test
+  public void combinedConditions() throws URISyntaxException {
+    assertSafe("combinedConditions", "foo");
+  }
+
+  @Test
+  public void multiStepBooleanSubstitution() throws URISyntaxException {
+    assertSafe("multiStepBooleanSubstitution", "foo");
+  }
+
+  @Test
+  public void unconditionalSafe() throws URISyntaxException {
+    assertSafe("unconditionalSafe", "foo");
+  }
+
+  @Test
+  public void doubleBoolean() throws URISyntaxException {
+    assertSafe("doubleBoolean", "foo");
+  }
+
+  @Test
+  public void booleanAndControlFlow() throws URISyntaxException {
+    assertSafe("booleanAndControlFlow", "foo");
+  }
+
+  @Test
+  public void dereferenceUnreachableAfterReassignment() throws URISyntaxException {
+    assertSafe("dereferenceUnreachableAfterReassignment", "foo");
+  }
+
+
+
+
 
   private static void assertSafe(String method, String targetMethod) throws URISyntaxException {
     assertResult(SOURCE, CLASS, method, targetMethod, DemandDrivenNullnessAnalysis.Result.SAFE);
