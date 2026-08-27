@@ -171,6 +171,28 @@ public final class DemandDrivenNullnessAnalysis {
   }
 
   /**
+   * Analyze the nullness of a reference at an arbitrary program point.
+   *
+   * <p>Unlike the primary overload, {@code programPoint} need not itself be a dereference. For
+   * example, callers can query an argument passed to {@code foo(apps)} by supplying the invocation
+   * as the program point and the argument node as {@code reference}.
+   *
+   * @param cfg the CFG for the containing method
+   * @param programPoint the node immediately after the program point being queried
+   * @param reference the reference whose nullness is queried
+   * @return whether {@code reference} has been proven non-null
+   */
+  public static Result analyzeReference(ControlFlowGraph cfg, Node programPoint, Node reference) {
+    return analyzeReference(cfg, programPoint, reference, DEFAULT_SOLVER);
+  }
+
+  /** Analyze a reference at an arbitrary program point using a caller-supplied SAT backend. */
+  public static Result analyzeReference(
+      ControlFlowGraph cfg, Node programPoint, Node reference, SatSolver solver) {
+    return analyze(cfg, programPoint, reference, solver);
+  }
+
+  /**
    * Analyze an explicitly supplied base expression using a caller-supplied SAT backend.
    *
    * @param cfg the CFG for the containing method
