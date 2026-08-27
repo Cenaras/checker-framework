@@ -16,6 +16,7 @@ import java.util.Collections;
 import java.util.Map;
 import javax.tools.JavaFileManager;
 import javax.tools.JavaFileObject;
+import javax.tools.StandardLocation;
 import org.checkerframework.checker.mustcall.qual.MustCall;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.dataflow.analysis.AbstractValue;
@@ -236,6 +237,22 @@ public final class CFGVisualizeLauncher {
    */
   public static ControlFlowGraph generateMethodCFG(
       String file, String method, String clas, @Nullable Analysis<?, ?, ?> analysis) {
+    return generateMethodCFG(file, method, clas, analysis, null);
+  }
+
+  /**
+   * Generate a method CFG while making an additional source directory available to javac.
+   *
+   * <p>This is useful for integration tests (and clients) whose target source depends on sibling
+   * sources that are not already compiled. The directory should be the source-path root, rather
+   * than the package directory containing {@code file}.
+   */
+  public static ControlFlowGraph generateMethodCFG(
+      String file,
+      String method,
+      String clas,
+      @Nullable Analysis<?, ?, ?> analysis,
+      @Nullable String sourcePath) {
     // Note that `clas` occurs before `method` here, but nowhere else in this file.
     CFGProcessor cfgProcessor = new CFGProcessor(clas, method);
 
@@ -248,6 +265,10 @@ public final class CFGVisualizeLauncher {
         // the Must Call Checker.
         )
         JavacFileManager fileManager = (JavacFileManager) context.get(JavaFileManager.class)) {
+      if (sourcePath != null) {
+        fileManager.setLocationFromPaths(
+            StandardLocation.SOURCE_PATH, List.of(java.nio.file.Path.of(sourcePath)));
+      }
       l = fileManager.getJavaFileObjectsFromStrings(List.of(file)).iterator().next();
     } catch (IOException e) {
       throw new Error(e);
@@ -259,7 +280,8 @@ public final class CFGVisualizeLauncher {
       // warnings about our exception).
       @MustCall OutputStream nullOS = OutputStream.nullOutputStream();
       System.setErr(new PrintStream(nullOS));
-      javac.compile(List.of(l), List.of(clas), List.of(cfgProcessor), List.nil());
+      List<String> options = sourcePath == null ? List.nil() : List.of("-sourcepath", sourcePath);
+      javac.compile(List.of(l), List.of(clas), List.of(cfgProcessor), options);
     } catch (Throwable e) {
       // ok
     } finally {

@@ -171,6 +171,7 @@ if (rootProject.ext.testJdkVersion >= 22) {
 
 test {
   include("**/DemandDrivenNullness*Test.class")
+  include("**/IntegrationTest.class")
   include("**/Z3SatSolverTest.class")
 }
 allDataflowTests.dependsOn(test)

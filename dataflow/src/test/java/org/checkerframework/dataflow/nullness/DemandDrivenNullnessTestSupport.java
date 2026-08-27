@@ -160,14 +160,27 @@ abstract class DemandDrivenNullnessTestSupport {
   }
 
   /** Generate and validate the CFG for one fixture method. */
-  private static ControlFlowGraph generateCfg(String sourceFile, String className, String method)
+  protected static ControlFlowGraph generateCfg(String sourceFile, String className, String method)
+      throws URISyntaxException {
+    return generateCfg(sourceFile, className, method, null);
+  }
+
+  /** Generate a CFG with an optional source-path root for sibling source files. */
+  protected static ControlFlowGraph generateCfg(
+      String sourceFile, String className, String method, String sourcePathResource)
       throws URISyntaxException {
     URL resource = DemandDrivenNullnessTestSupport.class.getResource(sourceFile);
     assertNotNull("missing test resource " + sourceFile, resource);
     Path source = Path.of(resource.toURI());
+    String sourcePath = null;
+    if (sourcePathResource != null) {
+      URL sourcePathUrl = DemandDrivenNullnessTestSupport.class.getResource(sourcePathResource);
+      assertNotNull("missing source path resource " + sourcePathResource, sourcePathUrl);
+      sourcePath = Path.of(sourcePathUrl.toURI()).toString();
+    }
     ControlFlowGraph cfg =
         CFGVisualizeLauncher.generateMethodCFG(
-            source.toString(), method, className, /* analysis= */ null);
+            source.toString(), method, className, /* analysis= */ null, sourcePath);
     cfg.checkInvariants();
     return cfg;
   }
@@ -180,7 +193,7 @@ abstract class DemandDrivenNullnessTestSupport {
   }
 
   /** Find the unique invocation of {@code targetMethod} in {@code method}. */
-  private static MethodInvocationNode findInvocation(
+  protected static MethodInvocationNode findInvocation(
       ControlFlowGraph cfg, String method, String targetMethod) {
     MethodInvocationNode result = null;
     for (Node node : cfg.getAllNodes()) {
