@@ -1,6 +1,7 @@
 class DemandDrivenNullnessUnknownCases {
   static class Box {
-    void foo() {}
+    void foo() {
+    }
   }
 
   static class Holder {
@@ -13,7 +14,8 @@ class DemandDrivenNullnessUnknownCases {
     return null;
   }
 
-  static void arbitraryCall() {}
+  static void arbitraryCall() {
+  }
 
   static boolean possiblyMutateFields() {
     return true;
@@ -126,4 +128,59 @@ class DemandDrivenNullnessUnknownCases {
       second.value.foo();
     }
   }
+
+  void conjunctionFailure(Box x, boolean enabled) {
+    if (x == null && enabled) {
+      return;
+    }
+    x.foo();
+  }
+
+  void negatedConjunction(Box x, boolean maintenanceMode) {
+    boolean blocked = x == null && maintenanceMode;
+
+    if (!blocked) {
+      x.foo();
+    }
+  }
+
+  void splitConjunction(Box x, boolean strict) {
+    if (strict) {
+      if (x == null) {
+        return;
+      }
+    }
+
+    x.foo();
+  }
+
+  void assignmentOverwrite(Box x, Box replacement) {
+    if (x == null) {
+      return;
+    }
+    x = replacement;
+    x.foo(); // target
+  }
+
+  void validationInOnlyOneBranch(Box x, boolean validate) {
+    if (validate) {
+      if (x == null) {
+        return;
+      }
+    } else {
+      // no validation
+    }
+    x.foo();
+  }
+
+  void unrelatedFinalCheck(Box x, boolean special, boolean cancelled) {
+    if (x == null && special) {
+      return;
+    } else if (cancelled) {
+      return;
+    } else {
+      x.foo();
+    }
+  }
+
 }

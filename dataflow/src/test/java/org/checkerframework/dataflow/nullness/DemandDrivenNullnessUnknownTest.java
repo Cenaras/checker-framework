@@ -89,6 +89,37 @@ public class DemandDrivenNullnessUnknownTest extends DemandDrivenNullnessTestSup
     assertUnknown("possiblyAliasedFieldWrite", "foo");
   }
 
+  @Test
+  public void conjunctionFailure() throws URISyntaxException {
+    assertUnknown("conjunctionFailure", "foo");
+  }
+
+  @Test
+  public void negatedConjunction() throws URISyntaxException {
+    assertUnknown("negatedConjunction", "foo");
+  }
+
+  @Test
+  public void splitConjunction() throws URISyntaxException {
+    assertUnknown("splitConjunction", "foo");
+  }
+
+  @Test
+  public void assignmentOverwrite() throws URISyntaxException {
+    assertUnknown("assignmentOverwrite", "foo");
+  }
+
+  @Test
+  public void validationInOnlyOneBranch() throws URISyntaxException {
+    assertUnknown("validationInOnlyOneBranch", "foo");
+  }
+
+  @Test
+  public void unrelatedFinalCheck() throws URISyntaxException {
+    assertUnknown("unrelatedFinalCheck", "foo");
+  }
+
+
   private static void assertUnknown(String method, String targetMethod) throws URISyntaxException {
     assertResult(SOURCE, CLASS, method, targetMethod, DemandDrivenNullnessAnalysis.Result.UNKNOWN);
   }
