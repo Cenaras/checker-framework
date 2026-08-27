@@ -1,7 +1,6 @@
 class DemandDrivenNullnessUnknownCases {
   static class Box {
-    void foo() {
-    }
+    void foo() {}
   }
 
   static class Holder {
@@ -9,13 +8,17 @@ class DemandDrivenNullnessUnknownCases {
   }
 
   Box field;
+  static Box staticField;
 
   static Box nullableValue() {
     return null;
   }
 
-  static void arbitraryCall() {
+  static Holder nullableHolder() {
+    return null;
   }
+
+  static void arbitraryCall() {}
 
   static boolean possiblyMutateFields() {
     return true;
@@ -89,6 +92,9 @@ class DemandDrivenNullnessUnknownCases {
   }
 
   void loopIsUnsupported(Box x, boolean condition) {
+    if (x == null) {
+      return;
+    }
     while (condition) {
       condition = false;
     }
@@ -183,4 +189,48 @@ class DemandDrivenNullnessUnknownCases {
     }
   }
 
+  void unsupportedEquality(Box x, Box other) {
+    if (x == other) {
+      x.foo();
+    }
+  }
+
+  void unsupportedDereferenceBase() {
+    nullableValue().foo();
+  }
+
+  void unsupportedFieldReceiver() {
+    nullableHolder().value.foo();
+  }
+
+  void nestedFieldUnknownReassignment(Holder holder) {
+    if (holder.value != null) {
+      holder = nullableHolder();
+      holder.value.foo();
+    }
+  }
+
+  static void staticInvocationIsNotDereference() {
+    arbitraryCall();
+  }
+
+  static Box staticFieldAccessIsNotDereference() {
+    return staticField;
+  }
+
+  boolean booleanLiteralIsNotDereference() {
+    return true;
+  }
+
+  void unsupportedNullComparisonLeft(Box x) {
+    if (null == nullableValue()) {
+      x.foo();
+    }
+  }
+
+  void unsupportedNullComparisonRight(Box x) {
+    if (nullableValue() == null) {
+      x.foo();
+    }
+  }
 }

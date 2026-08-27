@@ -7,7 +7,12 @@ class DemandDrivenNullnessSafeCases {
     }
   }
 
+  static class Holder {
+    Box value;
+  }
+
   Box futureField;
+  static Box staticBox;
   boolean doneField;
 
   static Box submit() {
@@ -15,6 +20,8 @@ class DemandDrivenNullnessSafeCases {
   }
 
   static void arbitraryCall() {}
+
+  void instanceMethod() {}
 
   void directGuard(Box x) {
     if (x != null) {
@@ -164,4 +171,92 @@ class DemandDrivenNullnessSafeCases {
     x.foo();
   }
 
+  void castReceiver(Object value) {
+    if (value != null) {
+      ((Box) value).foo();
+    }
+  }
+
+  void castAssignment(Object value) {
+    if (value != null) {
+      Box box = (Box) value;
+      box.foo();
+    }
+  }
+
+  void castNullLiteral(Box x) {
+    if (x == (Box) null) {
+      return;
+    }
+    x.foo();
+  }
+
+  void trueBooleanLiteral(Box x) {
+    if (x == null && true) {
+      return;
+    }
+    x.foo();
+  }
+
+  void falseBooleanLiteral(Box x) {
+    if (x == null || false) {
+      return;
+    }
+    x.foo();
+  }
+
+  void stringLiteralAssignment(String text) {
+    text = "";
+    text.length();
+  }
+
+  Box guardedFieldAccess(Holder holder) {
+    if (holder == null) {
+      return null;
+    }
+    return holder.value;
+  }
+
+  Box guardedArrayAccess(Box[] boxes) {
+    if (boxes == null) {
+      return null;
+    }
+    return boxes[0];
+  }
+
+  void arrayCreationAssignment(Box[] boxes) {
+    boxes = new Box[1];
+    boxes[0] = null;
+  }
+
+  void nestedFieldAlias(Holder holder) {
+    if (holder.value != null) {
+      Holder alias = holder;
+      alias.value.foo();
+    }
+  }
+
+  void nestedCastReceiver(Object value) {
+    if (value != null) {
+      ((Box) (Object) value).foo();
+    }
+  }
+
+  static void staticFieldGuard() {
+    if (staticBox != null) {
+      staticBox.foo();
+    }
+  }
+
+  void thisReceiver() {
+    this.instanceMethod();
+  }
+
+  void emptyConditional(Box x, boolean condition) {
+    if (condition) {}
+    if (x == null) {
+      return;
+    }
+    x.foo();
+  }
 }

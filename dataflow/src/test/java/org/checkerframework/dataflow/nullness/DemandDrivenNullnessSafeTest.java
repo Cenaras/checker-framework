@@ -94,9 +94,79 @@ public class DemandDrivenNullnessSafeTest extends DemandDrivenNullnessTestSuppor
     assertSafe("dereferenceUnreachableAfterReassignment", "foo");
   }
 
+  @Test
+  public void castReceiver() throws URISyntaxException {
+    assertSafe("castReceiver", "foo");
+  }
 
+  @Test
+  public void castAssignment() throws URISyntaxException {
+    assertSafe("castAssignment", "foo");
+  }
 
+  @Test
+  public void castNullLiteral() throws URISyntaxException {
+    assertSafe("castNullLiteral", "foo");
+  }
 
+  @Test
+  public void trueBooleanLiteral() throws URISyntaxException {
+    assertSafe("trueBooleanLiteral", "foo");
+  }
+
+  @Test
+  public void falseBooleanLiteral() throws URISyntaxException {
+    assertSafe("falseBooleanLiteral", "foo");
+  }
+
+  @Test
+  public void stringLiteralAssignment() throws URISyntaxException {
+    assertSafe("stringLiteralAssignment", "length");
+  }
+
+  @Test
+  public void guardedFieldAccess() throws URISyntaxException {
+    assertFieldAccessResult(
+        SOURCE, CLASS, "guardedFieldAccess", "value", DemandDrivenNullnessAnalysis.Result.SAFE);
+  }
+
+  @Test
+  public void guardedArrayAccess() throws URISyntaxException {
+    assertArrayAccessResult(
+        SOURCE, CLASS, "guardedArrayAccess", DemandDrivenNullnessAnalysis.Result.SAFE);
+  }
+
+  @Test
+  public void arrayCreationAssignment() throws URISyntaxException {
+    assertArrayAccessResult(
+        SOURCE, CLASS, "arrayCreationAssignment", DemandDrivenNullnessAnalysis.Result.SAFE);
+  }
+
+  @Test
+  public void nestedFieldAlias() throws URISyntaxException {
+    assertSafe("nestedFieldAlias", "foo");
+  }
+
+  @Test
+  public void nestedCastReceiver() throws URISyntaxException {
+    assertSafe("nestedCastReceiver", "foo");
+  }
+
+  @Test
+  public void staticFieldGuard() throws URISyntaxException {
+    assertSafe("staticFieldGuard", "foo");
+  }
+
+  @Test
+  public void thisReceiver() throws URISyntaxException {
+    assertInvocationWithoutSolver(
+        SOURCE, CLASS, "thisReceiver", "instanceMethod", DemandDrivenNullnessAnalysis.Result.SAFE);
+  }
+
+  @Test
+  public void emptyConditional() throws URISyntaxException {
+    assertSafe("emptyConditional", "foo");
+  }
 
   private static void assertSafe(String method, String targetMethod) throws URISyntaxException {
     assertResult(SOURCE, CLASS, method, targetMethod, DemandDrivenNullnessAnalysis.Result.SAFE);

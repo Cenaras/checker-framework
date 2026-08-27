@@ -90,37 +90,35 @@ public final class PropositionalFormulas {
     return formula.accept(new SubstitutionVisitor(replacement));
   }
 
-  /**
-   * A single visitor instance performs a complete substitution traversal.
-   */
-    private record SubstitutionVisitor(Function<Object, PropositionalFormula> replacement)
-        implements PropositionalFormula.Visitor<PropositionalFormula> {
+  /** A single visitor instance performs a complete substitution traversal. */
+  private record SubstitutionVisitor(Function<Object, PropositionalFormula> replacement)
+      implements PropositionalFormula.Visitor<PropositionalFormula> {
 
     @Override
-      public PropositionalFormula visitConstant(boolean value) {
-        return value ? TRUE : FALSE;
-      }
-
-      @Override
-      public PropositionalFormula visitAtom(Object symbol) {
-        return Objects.requireNonNull(replacement.apply(symbol));
-      }
-
-      @Override
-      public PropositionalFormula visitNot(PropositionalFormula operand) {
-        return not(operand.accept(this));
-      }
-
-      @Override
-      public PropositionalFormula visitAnd(PropositionalFormula left, PropositionalFormula right) {
-        return and(left.accept(this), right.accept(this));
-      }
-
-      @Override
-      public PropositionalFormula visitOr(PropositionalFormula left, PropositionalFormula right) {
-        return or(left.accept(this), right.accept(this));
-      }
+    public PropositionalFormula visitConstant(boolean value) {
+      return value ? TRUE : FALSE;
     }
+
+    @Override
+    public PropositionalFormula visitAtom(Object symbol) {
+      return Objects.requireNonNull(replacement.apply(symbol));
+    }
+
+    @Override
+    public PropositionalFormula visitNot(PropositionalFormula operand) {
+      return not(operand.accept(this));
+    }
+
+    @Override
+    public PropositionalFormula visitAnd(PropositionalFormula left, PropositionalFormula right) {
+      return and(left.accept(this), right.accept(this));
+    }
+
+    @Override
+    public PropositionalFormula visitOr(PropositionalFormula left, PropositionalFormula right) {
+      return or(left.accept(this), right.accept(this));
+    }
+  }
 
   private record ConstantFormula(boolean value) implements PropositionalFormula {
     @Override

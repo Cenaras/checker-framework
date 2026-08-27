@@ -119,6 +119,57 @@ public class DemandDrivenNullnessUnknownTest extends DemandDrivenNullnessTestSup
     assertUnknown("unrelatedFinalCheck", "foo");
   }
 
+  @Test
+  public void unsupportedEquality() throws URISyntaxException {
+    assertUnknown("unsupportedEquality", "foo");
+  }
+
+  @Test
+  public void unsupportedDereferenceBase() throws URISyntaxException {
+    assertUnsupportedBase(SOURCE, CLASS, "unsupportedDereferenceBase", "foo");
+  }
+
+  @Test
+  public void unsupportedFieldReceiver() throws URISyntaxException {
+    assertUnsupportedBase(SOURCE, CLASS, "unsupportedFieldReceiver", "foo");
+  }
+
+  @Test
+  public void nestedFieldUnknownReassignment() throws URISyntaxException {
+    assertUnknown("nestedFieldUnknownReassignment", "foo");
+  }
+
+  @Test
+  public void staticInvocationIsNotDereference() throws URISyntaxException {
+    assertUnsupportedBase(SOURCE, CLASS, "staticInvocationIsNotDereference", "arbitraryCall");
+  }
+
+  @Test
+  public void staticFieldAccessIsNotDereference() throws URISyntaxException {
+    assertStaticFieldAccessUnsupported(
+        SOURCE, CLASS, "staticFieldAccessIsNotDereference", "staticField");
+  }
+
+  @Test
+  public void booleanLiteralIsNotDereference() throws URISyntaxException {
+    assertBooleanLiteralUnsupported(SOURCE, CLASS, "booleanLiteralIsNotDereference");
+  }
+
+  @Test
+  public void treeFromDifferentCfgIsUnsupported() throws URISyntaxException {
+    assertTreeFromDifferentCfgUnsupported(
+        SOURCE, CLASS, "unguardedDereference", "disjunction", "foo");
+  }
+
+  @Test
+  public void unsupportedNullComparisonLeft() throws URISyntaxException {
+    assertUnknown("unsupportedNullComparisonLeft", "foo");
+  }
+
+  @Test
+  public void unsupportedNullComparisonRight() throws URISyntaxException {
+    assertUnknown("unsupportedNullComparisonRight", "foo");
+  }
 
   private static void assertUnknown(String method, String targetMethod) throws URISyntaxException {
     assertResult(SOURCE, CLASS, method, targetMethod, DemandDrivenNullnessAnalysis.Result.UNKNOWN);

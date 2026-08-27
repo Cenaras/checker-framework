@@ -9,9 +9,7 @@ import static org.checkerframework.dataflow.logic.PropositionalFormulas.substitu
 import static org.checkerframework.dataflow.logic.PropositionalFormulas.trueFormula;
 
 import com.sun.source.tree.Tree;
-import java.util.ArrayDeque;
 import java.util.Collections;
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -34,7 +32,6 @@ import org.checkerframework.dataflow.cfg.node.EqualToNode;
 import org.checkerframework.dataflow.cfg.node.FieldAccessNode;
 import org.checkerframework.dataflow.cfg.node.LocalVariableNode;
 import org.checkerframework.dataflow.cfg.node.MethodInvocationNode;
-import org.checkerframework.dataflow.cfg.node.NarrowingConversionNode;
 import org.checkerframework.dataflow.cfg.node.Node;
 import org.checkerframework.dataflow.cfg.node.NotEqualNode;
 import org.checkerframework.dataflow.cfg.node.NullLiteralNode;
@@ -42,7 +39,6 @@ import org.checkerframework.dataflow.cfg.node.ObjectCreationNode;
 import org.checkerframework.dataflow.cfg.node.StringLiteralNode;
 import org.checkerframework.dataflow.cfg.node.ThisNode;
 import org.checkerframework.dataflow.cfg.node.TypeCastNode;
-import org.checkerframework.dataflow.cfg.node.WideningConversionNode;
 import org.checkerframework.dataflow.logic.BoundedExhaustiveSatSolver;
 import org.checkerframework.dataflow.logic.PropositionalFormula;
 import org.checkerframework.dataflow.logic.SatSolver;
@@ -294,17 +290,20 @@ public final class DemandDrivenNullnessAnalysis {
 
     boolean thenEdge = conditional.getThenSuccessor() == successor;
     boolean elseEdge = conditional.getElseSuccessor() == successor;
-    assert (thenEdge != elseEdge);
+    // Can this even happen?
+    if (thenEdge == elseEdge) {
+      return TRUE;
+    }
 
     // This looks odd, but the ConditionalBlock does not contain the guard itself, it is only used
     // for branching. The predecessor of the ConditionalBlock is the block containing the actual
     // guard.
     Set<Block> conditionPredecessors = conditional.getPredecessors();
-    assert(conditionPredecessors.size() == 1);
+    assert (conditionPredecessors.size() == 1);
 
     Block conditionBlock = conditionPredecessors.iterator().next();
     Node condition = conditionBlock.getLastNode();
-    assert(condition != null);
+    assert (condition != null);
 
     PropositionalFormula result = booleanFormula(condition);
     return thenEdge ? result : not(result);
@@ -411,18 +410,13 @@ public final class DemandDrivenNullnessAnalysis {
 
   /** Returns whether evaluating {@code root} may invoke user code that can mutate fields. */
   private static boolean containsPotentiallySideEffectingCall(Node root) {
-    Set<Node> visited = Collections.newSetFromMap(new IdentityHashMap<>());
-    Deque<Node> worklist = new ArrayDeque<>();
-    worklist.add(root);
-    while (!worklist.isEmpty()) {
-      Node node = worklist.removeLast();
-      if (!visited.add(node)) {
-        continue;
-      }
-      if (isPotentiallySideEffectingCall(node)) {
+    if (isPotentiallySideEffectingCall(root)) {
+      return true;
+    }
+    for (Node operand : root.getTransitiveOperands()) {
+      if (isPotentiallySideEffectingCall(operand)) {
         return true;
       }
-      worklist.addAll(node.getOperands());
     }
     return false;
   }
@@ -463,20 +457,13 @@ public final class DemandDrivenNullnessAnalysis {
     return atom(new OpaqueKey(node.getUid()));
   }
 
-  /** Removes value-preserving conversions that can surround a supported expression. */
+  /** Removes a cast that can surround a supported reference or boolean expression. */
   private static Node unwrap(Node node) {
     Node current = node;
-    while (true) {
-      if (current instanceof TypeCastNode typeCast) {
-        current = typeCast.getOperand();
-      } else if (current instanceof WideningConversionNode widening) {
-        current = widening.getOperand();
-      } else if (current instanceof NarrowingConversionNode narrowing) {
-        current = narrowing.getOperand();
-      } else {
-        return current;
-      }
+    while (current instanceof TypeCastNode typeCast) {
+      current = typeCast.getOperand();
     }
+    return current;
   }
 
   /** Converts a supported expression node to a stable symbolic reference. */
@@ -532,7 +519,8 @@ public final class DemandDrivenNullnessAnalysis {
 
     @Override
     public Reference replace(Reference from, Reference to) {
-      return equals(from) ? to : this;
+      assert equals(from);
+      return to;
     }
 
     @Override
@@ -551,7 +539,8 @@ public final class DemandDrivenNullnessAnalysis {
 
     @Override
     public Reference replace(Reference from, Reference to) {
-      return this == from ? to : this;
+      assert this == from;
+      return to;
     }
 
     @Override
@@ -572,7 +561,8 @@ public final class DemandDrivenNullnessAnalysis {
       if (equals(from)) {
         return to;
       }
-      return receiver == null ? this : new FieldReference(receiver.replace(from, to), field);
+      assert receiver != null && receiver.contains(from);
+      return new FieldReference(receiver.replace(from, to), field);
     }
 
     @Override
