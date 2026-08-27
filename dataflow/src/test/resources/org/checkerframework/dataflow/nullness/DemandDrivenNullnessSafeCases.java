@@ -171,6 +171,8 @@ class DemandDrivenNullnessSafeCases {
     x.foo();
   }
 
+  // TODO: Review these tests
+
   void castReceiver(Object value) {
     if (value != null) {
       ((Box) value).foo();

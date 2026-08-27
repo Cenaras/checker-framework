@@ -213,7 +213,7 @@ public final class DemandDrivenNullnessAnalysis {
 
     DemandDrivenNullnessAnalysis analysis = new DemandDrivenNullnessAnalysis(solver);
     // Initial assumption: reference == null.
-    PropositionalFormula nullAtDereference = atom(new PropertyKey(Property.NULL, reference));
+    PropositionalFormula nullAtDereference = atom(new PropertyKey(PredicateKind.IS_NULL, reference));
     Set<Block> path = Collections.newSetFromMap(new IdentityHashMap<>());
     // Attempt to disprove.
     boolean allPathsContradictNull =
@@ -312,41 +312,52 @@ public final class DemandDrivenNullnessAnalysis {
   /** Substitutes the value assigned to {@code target} into a backwards path formula. */
   private PropositionalFormula substituteAssignment(
       PropositionalFormula formula, Reference target, Node expression) {
+    // Construct a symbolic reference for the expression -- doesn't support method calls (e.g., x = foo())
     Reference rhsReference = reference(expression);
-    PropositionalFormula rhsNullness = nullnessFormula(expression);
-    PropositionalFormula rhsBoolean = booleanFormula(expression);
     Map<Object, PropositionalFormula> replacements = new HashMap<>();
 
     return substitute(
         formula,
-        key -> {
-          PropositionalFormula prior = replacements.get(key);
-          if (prior != null) {
-            return prior;
-          }
-          PropositionalFormula replacement = null;
-          if (key instanceof PropertyKey propertyKey) {
-            Reference referenced = propertyKey.reference;
-            if (referenced.equals(target)) {
-              replacement = propertyKey.property == Property.NULL ? rhsNullness : rhsBoolean;
-            } else if (referenced.contains(target)) {
-              if (rhsReference == null) {
-                replacement = freshAtom();
-              } else {
-                Reference rewritten = referenced.replace(target, rhsReference);
-                replacement = atom(new PropertyKey(propertyKey.property, rewritten));
-              }
-            } else if (target instanceof FieldReference && referenced.hasField()) {
-              // Receiver aliasing is not tracked for arbitrary field writes.
-              replacement = freshAtom();
-            }
-          }
-          if (replacement == null) {
-            replacement = atom(key);
-          }
-          replacements.put(key, replacement);
-          return replacement;
-        });
+        key ->
+            replacements.computeIfAbsent(
+                key, unused -> replacementForAssignment(key, target, expression, rhsReference)));
+  }
+
+  /** Returns the value of one formula atom before an assignment to {@code target}. */
+  private PropositionalFormula replacementForAssignment(
+      Object atomKey, Reference lhsTargetReference, Node rhsExpression, @Nullable Reference rhsReference) {
+    if (!(atomKey instanceof PropertyKey propertyAtom)) {
+      return atom(atomKey);
+    }
+
+    // Check if the atom in the formula represents the LHS we are assigning to
+    Reference atomReference = propertyAtom.reference;
+    if (atomReference.equals(lhsTargetReference)) {
+      // The property key states which fact we are asking about the atom (x is null, b == true)
+      // Construct the appropriate formula for the RHS: Is the variable null? Does the boolean evaluate to true?
+      return propertyAtom.predicateKind == PredicateKind.IS_NULL
+          ? nullnessFormula(rhsExpression)
+          : booleanFormula(rhsExpression);
+    }
+
+    // For chained dereferences: a.b.foo(). We ask Null(a.b). If we encounter var a = h, then
+    // the atom reference (a.b) contains the lhs (a) of the assignment.
+    if (atomReference.contains(lhsTargetReference)) {
+      // If the RHS is an unknown reference (e.g., non-variable, field, or this), reset the formula
+      if (rhsReference == null) {
+        return freshAtom();
+      }
+      // Else it was a reference supported: Substitute to check for (local) aliasing.
+      Reference rewritten = atomReference.replace(lhsTargetReference, rhsReference);
+      return atom(new PropertyKey(propertyAtom.predicateKind, rewritten));
+    }
+
+    if (lhsTargetReference instanceof FieldReference && atomReference.hasField()) {
+      // Receiver aliasing is not tracked for arbitrary field writes.
+      return freshAtom();
+    }
+
+    return atom(atomKey);
   }
 
   /** Invalidates all facts involving fields across a possibly side-effecting method invocation. */
@@ -376,7 +387,7 @@ public final class DemandDrivenNullnessAnalysis {
     }
     Reference ref = reference(node);
     if (ref != null) {
-      return atom(new PropertyKey(Property.BOOLEAN, ref));
+      return atom(new PropertyKey(PredicateKind.IS_TRUE, ref));
     }
     if (node instanceof ConditionalNotNode conditionalNot) {
       return not(booleanFormulaIgnoringCallSideEffects(conditionalNot.getOperand()));
@@ -430,11 +441,11 @@ public final class DemandDrivenNullnessAnalysis {
   private @Nullable PropositionalFormula nullComparison(Node left, Node right) {
     if (unwrap(left) instanceof NullLiteralNode) {
       Reference ref = reference(right);
-      return ref == null ? null : atom(new PropertyKey(Property.NULL, ref));
+      return ref == null ? null : atom(new PropertyKey(PredicateKind.IS_NULL, ref));
     }
     if (unwrap(right) instanceof NullLiteralNode) {
       Reference ref = reference(left);
-      return ref == null ? null : atom(new PropertyKey(Property.NULL, ref));
+      return ref == null ? null : atom(new PropertyKey(PredicateKind.IS_NULL, ref));
     }
     return null;
   }
@@ -447,7 +458,7 @@ public final class DemandDrivenNullnessAnalysis {
     }
     Reference ref = reference(node);
     if (ref != null) {
-      return atom(new PropertyKey(Property.NULL, ref));
+      return atom(new PropertyKey(PredicateKind.IS_NULL, ref));
     }
     if (node instanceof ObjectCreationNode
         || node instanceof ArrayCreationNode
@@ -571,12 +582,12 @@ public final class DemandDrivenNullnessAnalysis {
     }
   }
 
-  private enum Property {
-    NULL,
-    BOOLEAN
+  private enum PredicateKind {
+    IS_NULL,
+    IS_TRUE
   }
 
-  private record PropertyKey(Property property, Reference reference) {}
+  private record PropertyKey(PredicateKind predicateKind, Reference reference) {}
 
   private record OpaqueKey(long id) {}
 }

@@ -189,6 +189,8 @@ class DemandDrivenNullnessUnknownCases {
     }
   }
 
+  // TODO: Review these tests
+
   void unsupportedEquality(Box x, Box other) {
     if (x == other) {
       x.foo();
