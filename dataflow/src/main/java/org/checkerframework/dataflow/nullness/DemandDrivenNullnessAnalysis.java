@@ -253,6 +253,8 @@ public final class DemandDrivenNullnessAnalysis {
       }
 
       for (Block predecessor : predecessors) {
+        // AND the current formula with the condition required to traverse from predecessor -->
+        // successor. For non-conditional blocks, this is the trivial tautology formula
         PropositionalFormula predecessorFormula = and(current, edgeCondition(predecessor, block));
         if (isUnsatisfiable(predecessorFormula)) {
           // This edge contradicts the null hypothesis; all other incoming edges still matter.
@@ -292,27 +294,17 @@ public final class DemandDrivenNullnessAnalysis {
 
     boolean thenEdge = conditional.getThenSuccessor() == successor;
     boolean elseEdge = conditional.getElseSuccessor() == successor;
-    if (thenEdge == elseEdge) {
-      // Either both arms have been collapsed to one successor or this is not a recognized edge.
-      return TRUE;
-    }
+    assert (thenEdge != elseEdge);
 
-    Node condition = null;
-    for (Block conditionPredecessor : conditional.getPredecessors()) {
-      Node candidate = conditionPredecessor.getLastNode();
-      if (candidate == null) {
-        continue;
-      }
-      if (condition != null && condition != candidate) {
-        // This does not occur in CFGs produced by CFGBuilder.  Dropping the condition is a safe
-        // over-approximation for a custom CFG.
-        return TRUE;
-      }
-      condition = candidate;
-    }
-    if (condition == null) {
-      return TRUE;
-    }
+    // This looks odd, but the ConditionalBlock does not contain the guard itself, it is only used
+    // for branching. The predecessor of the ConditionalBlock is the block containing the actual
+    // guard.
+    Set<Block> conditionPredecessors = conditional.getPredecessors();
+    assert(conditionPredecessors.size() == 1);
+
+    Block conditionBlock = conditionPredecessors.iterator().next();
+    Node condition = conditionBlock.getLastNode();
+    assert(condition != null);
 
     PropositionalFormula result = booleanFormula(condition);
     return thenEdge ? result : not(result);

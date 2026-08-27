@@ -168,20 +168,11 @@ if (rootProject.ext.testJdkVersion >= 22) {
   testDataflowAnalysis("unnamedPatternTest", "java22/unnamed-pattern", "reachingdef.ReachingDefinition", true)
 }
 
-tasks.register("demandDrivenNullnessAnalysisTest", Test) {
-  description = "Run the demand-driven nullness analysis tests."
-  group = "Verification"
-  testClassesDirs = sourceSets.test.output.classesDirs
-  classpath = sourceSets.test.runtimeClasspath
-  include("**/DemandDrivenNullnessAnalysisTest.class")
+test {
+  include("**/DemandDrivenNullness*Test.class")
   include("**/BoundedExhaustiveSatSolverTest.class")
 }
-allDataflowTests.dependsOn(demandDrivenNullnessAnalysisTest)
-
-test {
-  // The tests are run by allDataflowTests.
-  exclude("**/*")
-}
+allDataflowTests.dependsOn(test)
 
 apply from: rootProject.file("gradle-mvn-push.gradle")
 
