@@ -75,6 +75,7 @@ public final class DemandDrivenNullnessAnalysis {
 
   private static final PropositionalFormula TRUE = trueFormula();
   private static final PropositionalFormula FALSE = falseFormula();
+  private static final SatSolver DEFAULT_SOLVER = new Z3SatSolver();
 
   private final SatSolver solver;
   private int pathSteps;
@@ -92,7 +93,7 @@ public final class DemandDrivenNullnessAnalysis {
    * @return whether its base has been proven non-null
    */
   public static Result analyze(ControlFlowGraph cfg, Node dereference) {
-    return analyze(cfg, dereference, new Z3SatSolver());
+    return analyze(cfg, dereference, DEFAULT_SOLVER);
   }
 
   /**
@@ -105,20 +106,8 @@ public final class DemandDrivenNullnessAnalysis {
    */
   public static Result analyze(ControlFlowGraph cfg, Node dereference, SatSolver solver) {
     Objects.requireNonNull(solver);
-    Node base;
-    if (dereference instanceof MethodInvocationNode invocation) {
-      if (invocation.getTarget().isStatic()) {
-        return Result.UNKNOWN;
-      }
-      base = invocation.getTarget().getReceiver();
-    } else if (dereference instanceof FieldAccessNode fieldAccess) {
-      if (fieldAccess.isStatic()) {
-        return Result.UNKNOWN;
-      }
-      base = fieldAccess.getReceiver();
-    } else if (dereference instanceof ArrayAccessNode arrayAccess) {
-      base = arrayAccess.getArray();
-    } else {
+    Node base = getDereferenceBase(dereference);
+    if (base == null) {
       return Result.UNKNOWN;
     }
     return analyze(cfg, dereference, base, solver);
@@ -135,7 +124,7 @@ public final class DemandDrivenNullnessAnalysis {
    * @return whether its base has been proven non-null
    */
   public static Result analyze(ControlFlowGraph cfg, Tree dereferenceTree) {
-    return analyze(cfg, dereferenceTree, new Z3SatSolver());
+    return analyze(cfg, dereferenceTree, DEFAULT_SOLVER);
   }
 
   /**
@@ -154,14 +143,13 @@ public final class DemandDrivenNullnessAnalysis {
     }
     Node dereference = null;
     for (Node node : nodes) {
-      if (node instanceof MethodInvocationNode
-          || node instanceof FieldAccessNode
-          || node instanceof ArrayAccessNode) {
-        if (dereference != null) {
-          return Result.UNKNOWN;
-        }
-        dereference = node;
+      if (getDereferenceBase(node) == null) {
+        continue;
       }
+      if (dereference != null) {
+        return Result.UNKNOWN;
+      }
+      dereference = node;
     }
     return dereference == null ? Result.UNKNOWN : analyze(cfg, dereference, solver);
   }
@@ -170,8 +158,8 @@ public final class DemandDrivenNullnessAnalysis {
    * Analyze an explicitly supplied base expression immediately before a dereference.
    *
    * <p>This overload is useful for dereference kinds not recognized by {@link
-   * #analyze(ControlFlowGraph, Node)}. The dereference node must occur in {@code cfg}; the base
-   * must be a local variable, parameter, or field.
+   * #analyze(ControlFlowGraph, Node)}. The dereference node must occur in {@code cfg}; unsupported
+   * base expressions result in {@link Result#UNKNOWN}.
    *
    * @param cfg the CFG for the containing method
    * @param dereference the node immediately after the program point being queried
@@ -179,7 +167,7 @@ public final class DemandDrivenNullnessAnalysis {
    * @return whether {@code base} has been proven non-null
    */
   public static Result analyze(ControlFlowGraph cfg, Node dereference, Node base) {
-    return analyze(cfg, dereference, base, new Z3SatSolver());
+    return analyze(cfg, dereference, base, DEFAULT_SOLVER);
   }
 
   /**
@@ -198,23 +186,24 @@ public final class DemandDrivenNullnessAnalysis {
     Objects.requireNonNull(base);
     Objects.requireNonNull(solver);
 
-    Reference reference = reference(base);
-    if (reference == null || dereference.getBlock() == null) {
+    Reference baseReference = createSymbolReference(base);
+    if (baseReference == null) {
       return Result.UNKNOWN;
     }
+
     Block block = dereference.getBlock();
+    assert block != null : "dereference must belong to a block in cfg";
     int index = identityIndexOf(block.getNodes(), dereference);
-    if (index < 0 || !cfg.getAllBlocks().contains(block)) {
-      return Result.UNKNOWN;
-    }
-    if (reference instanceof ThisReference) {
+    assert index >= 0 : "dereference must occur in its block";
+    assert cfg.getAllBlocks().contains(block) : "dereference block must belong to cfg";
+    if (baseReference instanceof ThisReference) {
       return Result.SAFE;
     }
 
     DemandDrivenNullnessAnalysis analysis = new DemandDrivenNullnessAnalysis(solver);
     // Initial assumption: reference == null.
     PropositionalFormula nullAtDereference =
-        atom(new PropertyKey(PredicateKind.IS_NULL, reference));
+        atom(new PredicateAtom(PredicateKind.IS_NULL, baseReference));
     Set<Block> path = Collections.newSetFromMap(new IdentityHashMap<>());
     // Attempt to disprove.
     boolean allPathsContradictNull =
@@ -272,7 +261,7 @@ public final class DemandDrivenNullnessAnalysis {
   /** Applies the backwards transfer for a node. */
   private PropositionalFormula transfer(Node node, PropositionalFormula formula) {
     if (node instanceof AssignmentNode assignment) {
-      Reference lhsReference = reference(assignment.getTarget());
+      Reference lhsReference = createSymbolReference(assignment.getTarget());
       if (lhsReference != null) {
         return substituteAssignment(formula, lhsReference, assignment.getExpression());
       }
@@ -292,19 +281,19 @@ public final class DemandDrivenNullnessAnalysis {
     Block thenSuccessor = conditional.getThenSuccessor();
     Block elseSuccessor = conditional.getElseSuccessor();
 
-    // Can this even happen?
+    // CFGBuilder may leave a conditional whose two branches join immediately. No branch
+    // predicate is required when both successors are the same block.
     if (thenSuccessor == elseSuccessor) {
       return TRUE;
     }
+    assert thenSuccessor == successor || elseSuccessor == successor;
 
     // This looks odd, but the ConditionalBlock does not contain the guard itself, it is only used
     // for branching. The predecessor of the ConditionalBlock is the block containing the actual
     // guard.
     Set<Block> conditionPredecessors = conditional.getPredecessors();
-    assert (conditionPredecessors.size() == 1);
-
-    Block conditionBlock = conditionPredecessors.iterator().next();
-    Node condition = conditionBlock.getLastNode();
+    assert conditionPredecessors.size() == 1;
+    Node condition = conditionPredecessors.iterator().next().getLastNode();
     assert (condition != null);
 
     PropositionalFormula conditionFormula = booleanFormula(condition);
@@ -314,9 +303,9 @@ public final class DemandDrivenNullnessAnalysis {
   /** Substitutes the value assigned to {@code lhsTarget} into a backwards path formula. */
   private PropositionalFormula substituteAssignment(
       PropositionalFormula formula, Reference lhsTarget, Node expression) {
-    // Construct a symbolic reference for the expression: x = ref(y), x = ref(this), x = ref(y.f).
-    // Will return null, if the expression is not a variable, this or field reference.
-    Reference rhsReference = reference(expression);
+    // Construct a symbolic reference for supported RHS access paths. Other expressions remain
+    // opaque, but their nullness can still be represented by an unconstrained atom.
+    Reference rhsReference = createSymbolReference(expression);
     Map<Object, PropositionalFormula> replacements = new HashMap<>();
 
     return substitute(
@@ -326,23 +315,23 @@ public final class DemandDrivenNullnessAnalysis {
                 key, unused -> replacementForAssignment(key, lhsTarget, expression, rhsReference)));
   }
 
-  /** Returns the value of one formula atom before an assignment to {@code target}. */
+  /** Returns one predicate atom's value before an assignment to {@code lhsTarget}. */
   private PropositionalFormula replacementForAssignment(
       Object atomKey,
       Reference lhsTargetReference,
       Node rhsExpression,
       @Nullable Reference rhsReference) {
-    if (!(atomKey instanceof PropertyKey propertyAtom)) {
+    if (!(atomKey instanceof PredicateAtom predicateAtom)) {
       return atom(atomKey);
     }
 
     // Check if the atom in the formula represents the LHS we are assigning to
-    Reference atomReference = propertyAtom.reference;
+    Reference atomReference = predicateAtom.reference;
     if (atomReference.equals(lhsTargetReference)) {
-      // The property key states which fact we are asking about the atom (x is null, b == true)
+      // The predicate atom states which fact we are asking about (x is null, b == true).
       // Construct the appropriate formula for the RHS: Is the variable null? Does the boolean
       // evaluate to true?
-      return switch (propertyAtom.predicateKind) {
+      return switch (predicateAtom.predicateKind) {
         case IS_NULL -> nullnessFormula(rhsExpression);
         case IS_TRUE -> booleanFormula(rhsExpression);
       };
@@ -358,7 +347,7 @@ public final class DemandDrivenNullnessAnalysis {
       }
       // Else it was a reference supported: Substitute to check for (local) aliasing.
       Reference rewritten = atomReference.replaceSubreferenceWith(lhsTargetReference, rhsReference);
-      return atom(new PropertyKey(propertyAtom.predicateKind, rewritten));
+      return atom(new PredicateAtom(predicateAtom.predicateKind, rewritten));
     }
 
     if (lhsTargetReference instanceof FieldReference && atomReference.containsFieldAccess()) {
@@ -375,8 +364,8 @@ public final class DemandDrivenNullnessAnalysis {
     return substitute(
         formula,
         key -> {
-          if (key instanceof PropertyKey propertyKey
-              && propertyKey.reference.containsFieldAccess()) {
+          if (key instanceof PredicateAtom predicateAtom
+              && predicateAtom.reference.containsFieldAccess()) {
             return replacements.computeIfAbsent(key, unused -> freshAtom());
           }
           return atom(key);
@@ -395,9 +384,9 @@ public final class DemandDrivenNullnessAnalysis {
     if (node instanceof BooleanLiteralNode literal) {
       return literal.getValue() ? TRUE : FALSE;
     }
-    Reference ref = reference(node);
+    Reference ref = createSymbolReference(node);
     if (ref != null) {
-      return atom(new PropertyKey(PredicateKind.IS_TRUE, ref));
+      return atom(new PredicateAtom(PredicateKind.IS_TRUE, ref));
     }
     if (node instanceof ConditionalNotNode conditionalNot) {
       return not(booleanFormulaIgnoringCallSideEffects(conditionalNot.getOperand()));
@@ -426,7 +415,7 @@ public final class DemandDrivenNullnessAnalysis {
         return not(nullComparison);
       }
     }
-    return atom(new OpaqueKey(node.getUid()));
+    return atom(new OpaqueAtom(node.getUid()));
   }
 
   /** Returns whether evaluating {@code root} may invoke user code that can mutate fields. */
@@ -449,15 +438,15 @@ public final class DemandDrivenNullnessAnalysis {
 
   /** Returns a null-comparison formula, or null if the operands are not a supported comparison. */
   private @Nullable PropositionalFormula nullComparison(Node left, Node right) {
-    if (unwrap(left) instanceof NullLiteralNode) {
-      Reference ref = reference(right);
-      return ref == null ? null : atom(new PropertyKey(PredicateKind.IS_NULL, ref));
+    @Nullable Node comparedExpression =
+        unwrap(left) instanceof NullLiteralNode
+            ? right
+            : unwrap(right) instanceof NullLiteralNode ? left : null;
+    if (comparedExpression == null) {
+      return null;
     }
-    if (unwrap(right) instanceof NullLiteralNode) {
-      Reference ref = reference(left);
-      return ref == null ? null : atom(new PropertyKey(PredicateKind.IS_NULL, ref));
-    }
-    return null;
+    Reference reference = createSymbolReference(comparedExpression);
+    return reference == null ? null : atom(new PredicateAtom(PredicateKind.IS_NULL, reference));
   }
 
   /** Converts the nullness of an assignment RHS to a formula. */
@@ -466,16 +455,16 @@ public final class DemandDrivenNullnessAnalysis {
     if (node instanceof NullLiteralNode) {
       return TRUE;
     }
-    Reference ref = reference(node);
+    Reference ref = createSymbolReference(node);
     if (ref != null) {
-      return atom(new PropertyKey(PredicateKind.IS_NULL, ref));
+      return atom(new PredicateAtom(PredicateKind.IS_NULL, ref));
     }
     if (node instanceof ObjectCreationNode
         || node instanceof ArrayCreationNode
         || node instanceof StringLiteralNode) {
       return FALSE;
     }
-    return atom(new OpaqueKey(node.getUid()));
+    return atom(new OpaqueAtom(node.getUid()));
   }
 
   /** Removes a cast that can surround a supported reference or boolean expression. */
@@ -488,7 +477,7 @@ public final class DemandDrivenNullnessAnalysis {
   }
 
   /** Converts a supported expression node to a stable symbolic reference. */
-  private static @Nullable Reference reference(Node original) {
+  private static @Nullable Reference createSymbolReference(Node original) {
     Node node = unwrap(original);
     if (node instanceof LocalVariableNode local) {
       return new VariableReference(local.getElement());
@@ -500,14 +489,28 @@ public final class DemandDrivenNullnessAnalysis {
       if (field.isStatic()) {
         return new FieldReference(null, field.getElement());
       }
-      Reference receiver = reference(field.getReceiver());
+      Reference receiver = createSymbolReference(field.getReceiver());
       return receiver == null ? null : new FieldReference(receiver, field.getElement());
     }
     return null;
   }
 
+  /** Returns the expression whose value is dereferenced, or null for unsupported dereferences. */
+  private static @Nullable Node getDereferenceBase(Node dereference) {
+    if (dereference instanceof MethodInvocationNode invocation) {
+      return invocation.getTarget().isStatic() ? null : invocation.getTarget().getReceiver();
+    }
+    if (dereference instanceof FieldAccessNode fieldAccess) {
+      return fieldAccess.isStatic() ? null : fieldAccess.getReceiver();
+    }
+    if (dereference instanceof ArrayAccessNode arrayAccess) {
+      return arrayAccess.getArray();
+    }
+    return null;
+  }
+
   private PropositionalFormula freshAtom() {
-    return atom(new OpaqueKey(freshAtomId--));
+    return atom(new OpaqueAtom(freshAtomId--));
   }
 
   private static int identityIndexOf(List<Node> nodes, Node sought) {
@@ -524,7 +527,7 @@ public final class DemandDrivenNullnessAnalysis {
     return solver.solve(formula) == SatSolver.Result.UNSATISFIABLE;
   }
 
-  private interface Reference {
+  private sealed interface Reference permits VariableReference, ThisReference, FieldReference {
     boolean containsSubreference(Reference other);
 
     Reference replaceSubreferenceWith(Reference from, Reference to);
@@ -597,7 +600,9 @@ public final class DemandDrivenNullnessAnalysis {
     IS_TRUE
   }
 
-  private record PropertyKey(PredicateKind predicateKind, Reference reference) {}
+  /** A Boolean atom asking whether a reference has a particular predicate. */
+  private record PredicateAtom(PredicateKind predicateKind, Reference reference) {}
 
-  private record OpaqueKey(long id) {}
+  /** A stable but uninterpreted atom for an expression the analysis does not model. */
+  private record OpaqueAtom(long id) {}
 }
