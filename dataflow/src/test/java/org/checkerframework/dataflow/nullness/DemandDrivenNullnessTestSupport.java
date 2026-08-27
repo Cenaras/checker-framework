@@ -15,8 +15,8 @@ import org.checkerframework.dataflow.cfg.node.FieldAccessNode;
 import org.checkerframework.dataflow.cfg.node.MethodInvocationNode;
 import org.checkerframework.dataflow.cfg.node.Node;
 import org.checkerframework.dataflow.cfg.visualize.CFGVisualizeLauncher;
-import org.checkerframework.dataflow.logic.BoundedExhaustiveSatSolver;
 import org.checkerframework.dataflow.logic.SatSolver;
+import org.checkerframework.dataflow.logic.Z3SatSolver;
 
 /** Shared assertions for demand-driven nullness tests. */
 abstract class DemandDrivenNullnessTestSupport {
@@ -138,7 +138,7 @@ abstract class DemandDrivenNullnessTestSupport {
     assertEquals(expected, DemandDrivenNullnessAnalysis.analyze(cfg, target.getTree()));
 
     AtomicInteger queryCount = new AtomicInteger();
-    SatSolver delegate = new BoundedExhaustiveSatSolver();
+    SatSolver delegate = new Z3SatSolver();
     SatSolver recordingSolver =
         formula -> {
           queryCount.incrementAndGet();

@@ -68,6 +68,8 @@ require-javadoc = "org.plumelib:require-javadoc:3.0.0"
 
 stubparser = "org.checkerframework:stubparser:3.28.1"
 
+z3-turnkey = "tools.aqua:z3-turnkey:4.14.1"
+
 [plugins]
 
 com-gradleup-shadow = { id = "com.gradleup.shadow", version = "9.6.1" }

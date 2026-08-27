@@ -12,6 +12,7 @@ dependencies {
 
   implementation(libs.hashmap.util)
   implementation(libs.javac.parse)
+  implementation(libs.z3.turnkey)
 
   testImplementation(libs.junit)
 
@@ -170,7 +171,7 @@ if (rootProject.ext.testJdkVersion >= 22) {
 
 test {
   include("**/DemandDrivenNullness*Test.class")
-  include("**/BoundedExhaustiveSatSolverTest.class")
+  include("**/Z3SatSolverTest.class")
 }
 allDataflowTests.dependsOn(test)
 

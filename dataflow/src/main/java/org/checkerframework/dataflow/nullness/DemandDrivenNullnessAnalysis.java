@@ -39,9 +39,9 @@ import org.checkerframework.dataflow.cfg.node.ObjectCreationNode;
 import org.checkerframework.dataflow.cfg.node.StringLiteralNode;
 import org.checkerframework.dataflow.cfg.node.ThisNode;
 import org.checkerframework.dataflow.cfg.node.TypeCastNode;
-import org.checkerframework.dataflow.logic.BoundedExhaustiveSatSolver;
 import org.checkerframework.dataflow.logic.PropositionalFormula;
 import org.checkerframework.dataflow.logic.SatSolver;
+import org.checkerframework.dataflow.logic.Z3SatSolver;
 
 /**
  * A demand-driven analysis that proves that the base of one dereference is non-null.
@@ -92,7 +92,7 @@ public final class DemandDrivenNullnessAnalysis {
    * @return whether its base has been proven non-null
    */
   public static Result analyze(ControlFlowGraph cfg, Node dereference) {
-    return analyze(cfg, dereference, new BoundedExhaustiveSatSolver());
+    return analyze(cfg, dereference, new Z3SatSolver());
   }
 
   /**
@@ -135,7 +135,7 @@ public final class DemandDrivenNullnessAnalysis {
    * @return whether its base has been proven non-null
    */
   public static Result analyze(ControlFlowGraph cfg, Tree dereferenceTree) {
-    return analyze(cfg, dereferenceTree, new BoundedExhaustiveSatSolver());
+    return analyze(cfg, dereferenceTree, new Z3SatSolver());
   }
 
   /**
@@ -179,7 +179,7 @@ public final class DemandDrivenNullnessAnalysis {
    * @return whether {@code base} has been proven non-null
    */
   public static Result analyze(ControlFlowGraph cfg, Node dereference, Node base) {
-    return analyze(cfg, dereference, base, new BoundedExhaustiveSatSolver());
+    return analyze(cfg, dereference, base, new Z3SatSolver());
   }
 
   /**
@@ -213,7 +213,8 @@ public final class DemandDrivenNullnessAnalysis {
 
     DemandDrivenNullnessAnalysis analysis = new DemandDrivenNullnessAnalysis(solver);
     // Initial assumption: reference == null.
-    PropositionalFormula nullAtDereference = atom(new PropertyKey(PredicateKind.IS_NULL, reference));
+    PropositionalFormula nullAtDereference =
+        atom(new PropertyKey(PredicateKind.IS_NULL, reference));
     Set<Block> path = Collections.newSetFromMap(new IdentityHashMap<>());
     // Attempt to disprove.
     boolean allPathsContradictNull =
@@ -310,10 +311,11 @@ public final class DemandDrivenNullnessAnalysis {
     return thenSuccessor == successor ? conditionFormula : not(conditionFormula);
   }
 
-  /** Substitutes the value assigned to {@code target} into a backwards path formula. */
+  /** Substitutes the value assigned to {@code lhsTarget} into a backwards path formula. */
   private PropositionalFormula substituteAssignment(
-      PropositionalFormula formula, Reference target, Node expression) {
-    // Construct a symbolic reference for the expression -- doesn't support method calls (e.g., x = foo())
+      PropositionalFormula formula, Reference lhsTarget, Node expression) {
+    // Construct a symbolic reference for the expression: x = ref(y), x = ref(this), x = ref(y.f).
+    // Will return null, if the expression is not a variable, this or field reference.
     Reference rhsReference = reference(expression);
     Map<Object, PropositionalFormula> replacements = new HashMap<>();
 
@@ -321,12 +323,15 @@ public final class DemandDrivenNullnessAnalysis {
         formula,
         key ->
             replacements.computeIfAbsent(
-                key, unused -> replacementForAssignment(key, target, expression, rhsReference)));
+                key, unused -> replacementForAssignment(key, lhsTarget, expression, rhsReference)));
   }
 
   /** Returns the value of one formula atom before an assignment to {@code target}. */
   private PropositionalFormula replacementForAssignment(
-      Object atomKey, Reference lhsTargetReference, Node rhsExpression, @Nullable Reference rhsReference) {
+      Object atomKey,
+      Reference lhsTargetReference,
+      Node rhsExpression,
+      @Nullable Reference rhsReference) {
     if (!(atomKey instanceof PropertyKey propertyAtom)) {
       return atom(atomKey);
     }
@@ -335,7 +340,8 @@ public final class DemandDrivenNullnessAnalysis {
     Reference atomReference = propertyAtom.reference;
     if (atomReference.equals(lhsTargetReference)) {
       // The property key states which fact we are asking about the atom (x is null, b == true)
-      // Construct the appropriate formula for the RHS: Is the variable null? Does the boolean evaluate to true?
+      // Construct the appropriate formula for the RHS: Is the variable null? Does the boolean
+      // evaluate to true?
       return switch (propertyAtom.predicateKind) {
         case IS_NULL -> nullnessFormula(rhsExpression);
         case IS_TRUE -> booleanFormula(rhsExpression);
@@ -345,7 +351,8 @@ public final class DemandDrivenNullnessAnalysis {
     // For chained dereferences: a.b.foo(). We ask Null(a.b). If we encounter var a = h, then
     // the atom reference (a.b) contains the lhs (a) of the assignment.
     if (atomReference.containsSubreference(lhsTargetReference)) {
-      // If the RHS is an unknown reference (e.g., non-variable, field, or this), forget the previous fact.
+      // If the RHS is an unknown reference (e.g., non-variable, field, or this), forget the
+      // previous fact.
       if (rhsReference == null) {
         return freshAtom();
       }
@@ -368,7 +375,8 @@ public final class DemandDrivenNullnessAnalysis {
     return substitute(
         formula,
         key -> {
-          if (key instanceof PropertyKey propertyKey && propertyKey.reference.containsFieldAccess()) {
+          if (key instanceof PropertyKey propertyKey
+              && propertyKey.reference.containsFieldAccess()) {
             return replacements.computeIfAbsent(key, unused -> freshAtom());
           }
           return atom(key);

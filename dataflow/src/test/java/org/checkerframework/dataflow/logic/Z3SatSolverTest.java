@@ -12,36 +12,31 @@ import static org.junit.Assert.assertSame;
 
 import org.junit.Test;
 
-/** Tests {@link BoundedExhaustiveSatSolver}. */
-public class BoundedExhaustiveSatSolverTest {
+/** Tests {@link Z3SatSolver}. */
+public class Z3SatSolverTest {
 
   @Test
   public void reportsSatisfiableAndUnsatisfiable() {
     PropositionalFormula a = atom("a");
     PropositionalFormula b = atom("b");
-    SatSolver solver = new BoundedExhaustiveSatSolver();
+    SatSolver solver = new Z3SatSolver();
 
     assertEquals(SatSolver.Result.SATISFIABLE, solver.solve(or(a, b)));
     assertEquals(SatSolver.Result.UNSATISFIABLE, solver.solve(and(or(a, b), and(not(a), not(b)))));
   }
 
   @Test
-  public void reportsUnknownWhenBudgetIsExhausted() {
-    PropositionalFormula a = atom("a");
-    PropositionalFormula b = atom("b");
-    SatSolver solver = new BoundedExhaustiveSatSolver(1);
+  public void keepsDistinctSymbolsWithTheSameTextDistinct() {
+    Object first = new SameTextSymbol();
+    Object second = new SameTextSymbol();
+    PropositionalFormula formula = and(atom(first), not(atom(second)));
 
-    assertEquals(SatSolver.Result.UNKNOWN, solver.solve(and(a, b)));
-  }
-
-  @Test(expected = IllegalArgumentException.class)
-  public void rejectsNonPositiveBudget() {
-    new BoundedExhaustiveSatSolver(0);
+    assertEquals(SatSolver.Result.SATISFIABLE, new Z3SatSolver().solve(formula));
   }
 
   @Test
   public void solvesConstants() {
-    SatSolver solver = new BoundedExhaustiveSatSolver();
+    SatSolver solver = new Z3SatSolver();
 
     assertEquals(SatSolver.Result.SATISFIABLE, solver.solve(trueFormula()));
     assertEquals(SatSolver.Result.UNSATISFIABLE, solver.solve(falseFormula()));
@@ -87,5 +82,12 @@ public class BoundedExhaustiveSatSolverTest {
 
     assertSame(trueFormula(), replaced);
     assertSame(trueFormula(), substitute(trueFormula(), symbol -> falseFormula()));
+  }
+
+  private static final class SameTextSymbol {
+    @Override
+    public String toString() {
+      return "same";
+    }
   }
 }
