@@ -95,6 +95,11 @@ public class DemandDrivenNullnessSafeTest extends DemandDrivenNullnessTestSuppor
   }
 
   @Test
+  public void ternaryOperator() throws URISyntaxException {
+    assertSafe("ternaryOperator", "foo");
+  }
+
+  @Test
   public void castReceiver() throws URISyntaxException {
     assertSafe("castReceiver", "foo");
   }

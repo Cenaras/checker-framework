@@ -37,6 +37,7 @@ import org.checkerframework.dataflow.cfg.node.NotEqualNode;
 import org.checkerframework.dataflow.cfg.node.NullLiteralNode;
 import org.checkerframework.dataflow.cfg.node.ObjectCreationNode;
 import org.checkerframework.dataflow.cfg.node.StringLiteralNode;
+import org.checkerframework.dataflow.cfg.node.TernaryExpressionNode;
 import org.checkerframework.dataflow.cfg.node.ThisNode;
 import org.checkerframework.dataflow.cfg.node.TypeCastNode;
 import org.checkerframework.dataflow.logic.PropositionalFormula;
@@ -489,13 +490,21 @@ public final class DemandDrivenNullnessAnalysis {
     return atom(new OpaqueAtom(node.getUid()));
   }
 
-  /** Removes a cast that can surround a supported reference or boolean expression. */
+  /** Removes transparent CFG nodes that can surround a supported reference or expression. */
   private static Node unwrap(Node node) {
     Node current = node;
-    while (current instanceof TypeCastNode typeCast) {
-      current = typeCast.getOperand();
+    while (true) {
+      if (current instanceof TypeCastNode typeCast) {
+        current = typeCast.getOperand();
+      } else if (current instanceof TernaryExpressionNode ternaryExpression) {
+        // CFGBuilder assigns each ternary arm to this synthetic variable. Referring to it here
+        // permits the normal assignment transfer and conditional-edge handling to distinguish the
+        // two arms while walking backwards.
+        current = ternaryExpression.getTernaryExpressionVar();
+      } else {
+        return current;
+      }
     }
-    return current;
   }
 
   /** Converts a supported expression node to a stable symbolic reference. */

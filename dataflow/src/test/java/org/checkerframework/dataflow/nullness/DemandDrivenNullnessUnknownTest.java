@@ -55,6 +55,11 @@ public class DemandDrivenNullnessUnknownTest extends DemandDrivenNullnessTestSup
   }
 
   @Test
+  public void ternaryOperatorWrongArm() throws URISyntaxException {
+    assertUnknown("ternaryOperatorWrongArm", "foo");
+  }
+
+  @Test
   public void unknownReassignment() throws URISyntaxException {
     assertUnknown("unknownReassignment", "foo");
   }

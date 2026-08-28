@@ -179,6 +179,13 @@ class DemandDrivenNullnessUnknownCases {
     x.foo();
   }
 
+  void ternaryOperatorWrongArm(boolean b) {
+    Box x = b ? null : new Box();
+    if (b) {
+      x.foo();
+    }
+  }
+
   void unrelatedFinalCheck(Box x, boolean special, boolean cancelled) {
     if (x == null && special) {
       return;

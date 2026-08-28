@@ -171,6 +171,13 @@ class DemandDrivenNullnessSafeCases {
     x.foo();
   }
 
+  void ternaryOperator(boolean b) {
+    Box x = b ? new Box() : null;
+    if (b) {
+      x.foo();
+    }
+  }
+
   // TODO: Review these tests
 
   void castReceiver(Object value) {
