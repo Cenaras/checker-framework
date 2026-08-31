@@ -24,6 +24,10 @@ class DemandDrivenNullnessUnknownCases {
     return true;
   }
 
+  static boolean possiblyMutateFields(Object argument) {
+    return true;
+  }
+
   void unguardedDereference(Box x) {
     x.foo();
   }
@@ -200,6 +204,31 @@ class DemandDrivenNullnessUnknownCases {
     if (guarded.value != null) {
       holders[0].value = null;
       guarded.value.foo();
+    }
+  }
+
+  void assignmentInsideCondition(Box x) {
+    if (x != null && possiblyMutateFields(x = null)) {
+      x.foo();
+    }
+  }
+
+  void assignmentInsideConditionWithoutCall(Box x, Box other) {
+    if (x != null && (x = null) == other) {
+      x.foo();
+    }
+  }
+
+  void fieldAssignmentInsideCondition(Holder holder, Box other) {
+    if (holder.value != null && (holder.value = null) == other) {
+      holder.value.foo();
+    }
+  }
+
+  void assignmentInsideBooleanVariableCondition(Box x) {
+    boolean ok = x != null && possiblyMutateFields(x = null);
+    if (ok) {
+      x.foo();
     }
   }
 

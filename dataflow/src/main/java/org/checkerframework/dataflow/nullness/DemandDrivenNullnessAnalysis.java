@@ -400,14 +400,59 @@ public final class DemandDrivenNullnessAnalysis {
         });
   }
 
-  /** Converts a supported boolean-valued CFG node to a formula. */
-  private PropositionalFormula booleanFormula(Node original) {
-    PropositionalFormula formula = booleanFormulaIgnoringCallSideEffects(original);
-    return containsPotentiallySideEffectingCall(original) ? havocFields(formula) : formula;
+  /** Invalidates all facts that a write inside {@code root} may have changed. */
+  private PropositionalFormula havocWritesWithin(Node root, PropositionalFormula formula) {
+    PropositionalFormula result = havocWrite(root, formula);
+    for (Node operand : root.getTransitiveOperands()) {
+      result = havocWrite(operand, result);
+    }
+    return result;
   }
 
-  /** Converts a boolean node to a formula without accounting for effects of calls in the node. */
-  private PropositionalFormula booleanFormulaIgnoringCallSideEffects(Node original) {
+  /** Invalidates all facts that {@code node} may have changed, if it is an assignment. */
+  private PropositionalFormula havocWrite(Node node, PropositionalFormula formula) {
+    if (!(node instanceof AssignmentNode assignment)) {
+      return formula;
+    }
+    Reference target = createSymbolReference(assignment.getTarget());
+    if (target == null || target instanceof FieldReference) {
+      // As in replacementForAssignment: a field write, or a write whose target cannot be
+      // represented, may alias any represented field access.
+      return havocFields(formula);
+    }
+    Map<Object, PropositionalFormula> replacements = new HashMap<>();
+    return substitute(
+        formula,
+        key -> {
+          if (key instanceof PredicateAtom predicateAtom
+              && predicateAtom.reference.containsSubreference(target)) {
+            return replacements.computeIfAbsent(key, unused -> freshAtom());
+          }
+          return atom(key);
+        });
+  }
+
+  /**
+   * Converts a supported boolean-valued CFG node to a formula that holds where the evaluation of
+   * {@code original} completes.
+   *
+   * <p>The operands of {@code original} are evaluated at earlier program points than that one, so a
+   * write performed while evaluating a later operand may already have invalidated the fact recorded
+   * for an earlier one. Every reference the expression may write is therefore replaced by an
+   * unconstrained atom, exactly as a call in the expression invalidates facts about fields.
+   */
+  private PropositionalFormula booleanFormula(Node original) {
+    PropositionalFormula formula = booleanFormulaIgnoringSideEffects(original);
+    if (containsPotentiallySideEffectingCall(original)) {
+      formula = havocFields(formula);
+    }
+
+    // If a condition node itself contains an assignment (b && foo(x=null)) then havoc
+    return havocWritesWithin(original, formula);
+  }
+
+  /** Converts a boolean node to a formula without accounting for side effects within the node. */
+  private PropositionalFormula booleanFormulaIgnoringSideEffects(Node original) {
     Node node = unwrap(original);
     if (node instanceof BooleanLiteralNode literal) {
       return literal.getValue() ? TRUE : FALSE;
@@ -417,17 +462,17 @@ public final class DemandDrivenNullnessAnalysis {
       return atom(new PredicateAtom(PredicateKind.IS_TRUE, ref));
     }
     if (node instanceof ConditionalNotNode conditionalNot) {
-      return not(booleanFormulaIgnoringCallSideEffects(conditionalNot.getOperand()));
+      return not(booleanFormulaIgnoringSideEffects(conditionalNot.getOperand()));
     }
     if (node instanceof ConditionalAndNode conditionalAnd) {
       return and(
-          booleanFormulaIgnoringCallSideEffects(conditionalAnd.getLeftOperand()),
-          booleanFormulaIgnoringCallSideEffects(conditionalAnd.getRightOperand()));
+          booleanFormulaIgnoringSideEffects(conditionalAnd.getLeftOperand()),
+          booleanFormulaIgnoringSideEffects(conditionalAnd.getRightOperand()));
     }
     if (node instanceof ConditionalOrNode conditionalOr) {
       return or(
-          booleanFormulaIgnoringCallSideEffects(conditionalOr.getLeftOperand()),
-          booleanFormulaIgnoringCallSideEffects(conditionalOr.getRightOperand()));
+          booleanFormulaIgnoringSideEffects(conditionalOr.getLeftOperand()),
+          booleanFormulaIgnoringSideEffects(conditionalOr.getRightOperand()));
     }
     if (node instanceof EqualToNode equalTo) {
       PropositionalFormula nullComparison =

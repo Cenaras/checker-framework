@@ -130,6 +130,26 @@ public class DemandDrivenNullnessUnknownTest extends DemandDrivenNullnessTestSup
   }
 
   @Test
+  public void assignmentInsideCondition() throws URISyntaxException {
+    assertUnknown("assignmentInsideCondition", "foo");
+  }
+
+  @Test
+  public void assignmentInsideConditionWithoutCall() throws URISyntaxException {
+    assertUnknown("assignmentInsideConditionWithoutCall", "foo");
+  }
+
+  @Test
+  public void fieldAssignmentInsideCondition() throws URISyntaxException {
+    assertUnknown("fieldAssignmentInsideCondition", "foo");
+  }
+
+  @Test
+  public void assignmentInsideBooleanVariableCondition() throws URISyntaxException {
+    assertUnknown("assignmentInsideBooleanVariableCondition", "foo");
+  }
+
+  @Test
   public void unsupportedEquality() throws URISyntaxException {
     assertUnknown("unsupportedEquality", "foo");
   }

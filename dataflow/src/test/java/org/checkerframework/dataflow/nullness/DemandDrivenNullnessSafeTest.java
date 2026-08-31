@@ -173,6 +173,16 @@ public class DemandDrivenNullnessSafeTest extends DemandDrivenNullnessTestSuppor
     assertSafe("emptyConditional", "foo");
   }
 
+  @Test
+  public void unrelatedAssignmentInsideCondition() throws URISyntaxException {
+    assertSafe("unrelatedAssignmentInsideCondition", "foo");
+  }
+
+  @Test
+  public void unrelatedIncrementInsideCondition() throws URISyntaxException {
+    assertSafe("unrelatedIncrementInsideCondition", "foo");
+  }
+
   private static void assertSafe(String method, String targetMethod) throws URISyntaxException {
     assertResult(SOURCE, CLASS, method, targetMethod, DemandDrivenNullnessAnalysis.Result.SAFE);
   }

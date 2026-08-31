@@ -268,4 +268,16 @@ class DemandDrivenNullnessSafeCases {
     }
     x.foo();
   }
+
+  void unrelatedAssignmentInsideCondition(Box x, Box other) {
+    if (x != null && (other = null) == null) {
+      x.foo();
+    }
+  }
+
+  void unrelatedIncrementInsideCondition(Box x, int i) {
+    if (x != null && i++ > 0) {
+      x.foo();
+    }
+  }
 }
