@@ -24,12 +24,15 @@ import org.checkerframework.dataflow.cfg.block.ConditionalBlock;
 import org.checkerframework.dataflow.cfg.node.ArrayAccessNode;
 import org.checkerframework.dataflow.cfg.node.ArrayCreationNode;
 import org.checkerframework.dataflow.cfg.node.AssignmentNode;
+import org.checkerframework.dataflow.cfg.node.BitwiseAndNode;
+import org.checkerframework.dataflow.cfg.node.BitwiseOrNode;
 import org.checkerframework.dataflow.cfg.node.BooleanLiteralNode;
 import org.checkerframework.dataflow.cfg.node.ConditionalAndNode;
 import org.checkerframework.dataflow.cfg.node.ConditionalNotNode;
 import org.checkerframework.dataflow.cfg.node.ConditionalOrNode;
 import org.checkerframework.dataflow.cfg.node.EqualToNode;
 import org.checkerframework.dataflow.cfg.node.FieldAccessNode;
+import org.checkerframework.dataflow.cfg.node.InstanceOfNode;
 import org.checkerframework.dataflow.cfg.node.LocalVariableNode;
 import org.checkerframework.dataflow.cfg.node.MethodInvocationNode;
 import org.checkerframework.dataflow.cfg.node.Node;
@@ -473,6 +476,28 @@ public final class DemandDrivenNullnessAnalysis {
       return or(
           booleanFormulaIgnoringSideEffects(conditionalOr.getLeftOperand()),
           booleanFormulaIgnoringSideEffects(conditionalOr.getRightOperand()));
+    }
+    if (node instanceof BitwiseAndNode bitwiseAnd) {
+      // A boolean context makes this the non-short-circuit `&`, so both operands are boolean.
+      return and(
+          booleanFormulaIgnoringSideEffects(bitwiseAnd.getLeftOperand()),
+          booleanFormulaIgnoringSideEffects(bitwiseAnd.getRightOperand()));
+    }
+    if (node instanceof BitwiseOrNode bitwiseOr) {
+      // Likewise the non-short-circuit `|`.
+      return or(
+          booleanFormulaIgnoringSideEffects(bitwiseOr.getLeftOperand()),
+          booleanFormulaIgnoringSideEffects(bitwiseOr.getRightOperand()));
+    }
+    if (node instanceof InstanceOfNode instanceOf) {
+      // `e instanceof T` is false when e is null, whatever T is (JLS 15.20.2). The type test
+      // itself stays uninterpreted, so the else branch learns nothing.
+      Reference operand = createSymbolReference(instanceOf.getOperand());
+      if (operand != null) {
+        return and(
+            not(atom(new PredicateAtom(PredicateKind.IS_NULL, operand))),
+            atom(new OpaqueAtom(node.getUid())));
+      }
     }
     if (node instanceof EqualToNode equalTo) {
       PropositionalFormula nullComparison =

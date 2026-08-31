@@ -183,6 +183,46 @@ public class DemandDrivenNullnessSafeTest extends DemandDrivenNullnessTestSuppor
     assertSafe("unrelatedIncrementInsideCondition", "foo");
   }
 
+  @Test
+  public void instanceofGuard() throws URISyntaxException {
+    assertSafe("instanceofGuard", "toString");
+  }
+
+  @Test
+  public void instanceofPatternGuardsItsOperand() throws URISyntaxException {
+    assertSafe("instanceofPatternGuardsItsOperand", "toString");
+  }
+
+  @Test
+  public void instanceofFieldGuard() throws URISyntaxException {
+    assertSafe("instanceofFieldGuard", "toString");
+  }
+
+  @Test
+  public void negatedInstanceofGuard() throws URISyntaxException {
+    assertSafe("negatedInstanceofGuard", "toString");
+  }
+
+  @Test
+  public void instanceofBooleanVariable() throws URISyntaxException {
+    assertSafe("instanceofBooleanVariable", "toString");
+  }
+
+  @Test
+  public void nonShortCircuitConjunction() throws URISyntaxException {
+    assertSafe("nonShortCircuitConjunction", "foo");
+  }
+
+  @Test
+  public void nonShortCircuitConjunctionOfChecks() throws URISyntaxException {
+    assertSafe("nonShortCircuitConjunctionOfChecks", "foo");
+  }
+
+  @Test
+  public void negatedNonShortCircuitDisjunction() throws URISyntaxException {
+    assertSafe("negatedNonShortCircuitDisjunction", "foo");
+  }
+
   private static void assertSafe(String method, String targetMethod) throws URISyntaxException {
     assertResult(SOURCE, CLASS, method, targetMethod, DemandDrivenNullnessAnalysis.Result.SAFE);
   }

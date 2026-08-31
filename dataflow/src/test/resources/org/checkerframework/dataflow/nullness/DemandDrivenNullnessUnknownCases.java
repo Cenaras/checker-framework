@@ -232,6 +232,39 @@ class DemandDrivenNullnessUnknownCases {
     }
   }
 
+  void instanceofWrongBranch(Object x) {
+    if (x instanceof Box) {
+      arbitraryCall();
+    } else {
+      x.toString();
+    }
+  }
+
+  void instanceofUnrelatedOperand(Object x, Object other) {
+    if (other instanceof Box) {
+      x.toString();
+    }
+  }
+
+  // `box` is bound to `x` only when the pattern matches; the binding is not modelled.
+  void instanceofPatternBinding(Object x) {
+    if (x instanceof Box box) {
+      box.foo();
+    }
+  }
+
+  void nonShortCircuitDisjunction(Box x, boolean enabled) {
+    if (x != null | enabled) {
+      x.foo();
+    }
+  }
+
+  void exclusiveOr(Box x, boolean enabled) {
+    if ((x != null) ^ enabled) {
+      x.foo();
+    }
+  }
+
   // TODO: Review these tests
 
   void unsupportedEquality(Box x, Box other) {

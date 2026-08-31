@@ -150,6 +150,31 @@ public class DemandDrivenNullnessUnknownTest extends DemandDrivenNullnessTestSup
   }
 
   @Test
+  public void instanceofWrongBranch() throws URISyntaxException {
+    assertUnknown("instanceofWrongBranch", "toString");
+  }
+
+  @Test
+  public void instanceofUnrelatedOperand() throws URISyntaxException {
+    assertUnknown("instanceofUnrelatedOperand", "toString");
+  }
+
+  @Test
+  public void instanceofPatternBinding() throws URISyntaxException {
+    assertUnknown("instanceofPatternBinding", "foo");
+  }
+
+  @Test
+  public void nonShortCircuitDisjunction() throws URISyntaxException {
+    assertUnknown("nonShortCircuitDisjunction", "foo");
+  }
+
+  @Test
+  public void exclusiveOr() throws URISyntaxException {
+    assertUnknown("exclusiveOr", "foo");
+  }
+
+  @Test
   public void unsupportedEquality() throws URISyntaxException {
     assertUnknown("unsupportedEquality", "foo");
   }

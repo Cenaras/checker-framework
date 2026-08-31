@@ -12,6 +12,7 @@ class DemandDrivenNullnessSafeCases {
   }
 
   Box futureField;
+  Object objectField;
   static Box staticBox;
   boolean doneField;
 
@@ -277,6 +278,56 @@ class DemandDrivenNullnessSafeCases {
 
   void unrelatedIncrementInsideCondition(Box x, int i) {
     if (x != null && i++ > 0) {
+      x.foo();
+    }
+  }
+
+  void instanceofGuard(Object x) {
+    if (x instanceof Box) {
+      x.toString();
+    }
+  }
+
+  void instanceofPatternGuardsItsOperand(Object x) {
+    if (x instanceof Box box) {
+      x.toString();
+    }
+  }
+
+  void instanceofFieldGuard() {
+    if (objectField instanceof Box) {
+      objectField.toString();
+    }
+  }
+
+  void negatedInstanceofGuard(Object x) {
+    if (!(x instanceof Box)) {
+      return;
+    }
+    x.toString();
+  }
+
+  void instanceofBooleanVariable(Object x) {
+    boolean ok = x instanceof Box;
+    if (ok) {
+      x.toString();
+    }
+  }
+
+  void nonShortCircuitConjunction(Box x, boolean enabled) {
+    if (x != null & enabled) {
+      x.foo();
+    }
+  }
+
+  void nonShortCircuitConjunctionOfChecks(Box x, Box other) {
+    if (x != null & other != null) {
+      x.foo();
+    }
+  }
+
+  void negatedNonShortCircuitDisjunction(Box x, boolean enabled) {
+    if (!(x == null | enabled)) {
       x.foo();
     }
   }
