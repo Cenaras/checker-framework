@@ -196,6 +196,13 @@ class DemandDrivenNullnessUnknownCases {
     }
   }
 
+  void fieldWriteThroughUnmodelledReceiver(Holder[] holders, Holder guarded) {
+    if (guarded.value != null) {
+      holders[0].value = null;
+      guarded.value.foo();
+    }
+  }
+
   // TODO: Review these tests
 
   void unsupportedEquality(Box x, Box other) {

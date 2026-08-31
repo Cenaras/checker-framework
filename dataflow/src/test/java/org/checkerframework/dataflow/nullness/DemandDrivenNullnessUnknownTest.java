@@ -125,6 +125,11 @@ public class DemandDrivenNullnessUnknownTest extends DemandDrivenNullnessTestSup
   }
 
   @Test
+  public void fieldWriteThroughUnmodelledReceiver() throws URISyntaxException {
+    assertUnknown("fieldWriteThroughUnmodelledReceiver", "foo");
+  }
+
+  @Test
   public void unsupportedEquality() throws URISyntaxException {
     assertUnknown("unsupportedEquality", "foo");
   }

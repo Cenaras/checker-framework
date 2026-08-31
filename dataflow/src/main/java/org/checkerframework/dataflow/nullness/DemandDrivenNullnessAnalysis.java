@@ -258,6 +258,7 @@ public final class DemandDrivenNullnessAnalysis {
       Set<Block> predecessors = block.getPredecessors();
       if (predecessors.isEmpty()) {
         // A satisfiable assumption made it to an entry (or malformed dead-end) block.
+        // TODO: Inject a @Contract precondition and verify unsat here
         return false;
       }
 
@@ -288,6 +289,10 @@ public final class DemandDrivenNullnessAnalysis {
       if (lhsReference != null) {
         return substituteAssignment(formula, lhsReference, assignment.getExpression());
       }
+      // The target may still be a field reached through an unsupported receiver (for example,
+      // arr[0].field). Treat an assignment whose target cannot be represented as an unmodelled
+      // write: it may alias any represented field access, so retaining field facts is unsound.
+      return havocFields(formula);
     }
     if (isPotentiallySideEffectingCall(node)) {
       return havocFields(formula);
@@ -311,9 +316,9 @@ public final class DemandDrivenNullnessAnalysis {
     }
     assert thenSuccessor == successor || elseSuccessor == successor;
 
-    // This looks odd, but the ConditionalBlock does not contain the guard itself, it is only used
-    // for branching. The predecessor of the ConditionalBlock is the block containing the actual
-    // guard.
+    // This may look odd, but the ConditionalBlock does not contain the guard itself, it is only
+    // used for branching. The predecessor of the ConditionalBlock is the block containing the
+    // actual guard in its last node.
     Set<Block> conditionPredecessors = conditional.getPredecessors();
     assert conditionPredecessors.size() == 1;
     Node condition = conditionPredecessors.iterator().next().getLastNode();
