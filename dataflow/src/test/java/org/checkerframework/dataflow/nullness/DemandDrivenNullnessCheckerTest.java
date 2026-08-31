@@ -9,6 +9,7 @@ import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -42,7 +43,32 @@ public class DemandDrivenNullnessCheckerTest {
     assertTrue(result.output, result.output.contains("[demand-driven-nullness] UNKNOWN"));
   }
 
-  private static CompilationResult compile(String resourceName, String className)
+  @Test
+  public void duplicatedFinallyCopyIsNotEnough() throws IOException, URISyntaxException {
+    CompilationResult result =
+        compile(
+            "DemandDrivenNullnessCliDuplicatedFinally.java",
+            "DemandDrivenNullnessCliDuplicatedFinally",
+            "-A" + DemandDrivenNullnessChecker.EXPRESSION_OCCURRENCE_OPTION + "=1");
+
+    assertFalse(result.output, result.success);
+    assertTrue(result.output, result.output.contains("[demand-driven-nullness] UNKNOWN"));
+  }
+
+  @Test
+  public void everyDuplicatedFinallyCopyIsSafe() throws IOException, URISyntaxException {
+    CompilationResult result =
+        compile(
+            "DemandDrivenNullnessCliSafeFinally.java",
+            "DemandDrivenNullnessCliSafeFinally",
+            "-A" + DemandDrivenNullnessChecker.EXPRESSION_OCCURRENCE_OPTION + "=1");
+
+    assertTrue(result.output, result.success);
+    assertTrue(result.output, result.output.contains("[demand-driven-nullness] SAFE"));
+  }
+
+  private static CompilationResult compile(
+      String resourceName, String className, String... extraOptions)
       throws IOException, URISyntaxException {
     JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
     assertNotNull("tests require a JDK", compiler);
@@ -51,6 +77,14 @@ public class DemandDrivenNullnessCheckerTest {
     Path classes = Files.createTempDirectory("demand-driven-nullness-cli");
     classes.toFile().deleteOnExit();
     DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+    List<String> options =
+        new ArrayList<>(
+            List.of(
+                "-A" + DemandDrivenNullnessChecker.CLASS_OPTION + "=" + className,
+                "-A" + DemandDrivenNullnessChecker.METHOD_OPTION + "=target",
+                "-A" + DemandDrivenNullnessChecker.CONDITION_OPTION + "=found",
+                "-A" + DemandDrivenNullnessChecker.EXPRESSION_OPTION + "=value"));
+    options.addAll(List.of(extraOptions));
     boolean success;
     try {
       try (StandardJavaFileManager fileManager =
@@ -59,17 +93,7 @@ public class DemandDrivenNullnessCheckerTest {
         Iterable<? extends JavaFileObject> sources =
             fileManager.getJavaFileObjectsFromPaths(List.of(source));
         JavaCompiler.CompilationTask task =
-            compiler.getTask(
-                null,
-                fileManager,
-                diagnostics,
-                List.of(
-                    "-A" + DemandDrivenNullnessChecker.CLASS_OPTION + "=" + className,
-                    "-A" + DemandDrivenNullnessChecker.METHOD_OPTION + "=target",
-                    "-A" + DemandDrivenNullnessChecker.CONDITION_OPTION + "=found",
-                    "-A" + DemandDrivenNullnessChecker.EXPRESSION_OPTION + "=value"),
-                null,
-                sources);
+            compiler.getTask(null, fileManager, diagnostics, options, null, sources);
         task.setProcessors(List.of(new DemandDrivenNullnessChecker()));
         success = task.call();
       }

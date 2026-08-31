@@ -232,23 +232,32 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
     }
 
     NodeRange selectedRange = expressionRanges.get(expressionOccurrence);
-    DemandDrivenNullnessAnalysis.Result result = DemandDrivenNullnessAnalysis.Result.UNKNOWN;
-    Node selectedNode = null;
+    List<NodeRange> selectedNodes = new ArrayList<>();
     for (NodeRange nodeRange : expressionNodes) {
       if (nodeRange.start == selectedRange.start && nodeRange.end == selectedRange.end) {
-        selectedNode = nodeRange.node;
-        DemandDrivenNullnessAnalysis.Result nodeResult =
-            DemandDrivenNullnessAnalysis.analyzeReference(cfg, nodeRange.node, nodeRange.node);
-        if (nodeResult == DemandDrivenNullnessAnalysis.Result.SAFE) {
-          result = nodeResult;
-          break;
-        }
+        selectedNodes.add(nodeRange);
+      }
+    }
+    if (selectedNodes.isEmpty()) {
+      error(methodElement, "internal error: selected expression has no CFG node");
+      return;
+    }
+
+    // One source range can correspond to several CFG nodes at distinct program points, because
+    // CFGBuilder duplicates a finally block once per exit path that runs it. Safety is required on
+    // every path reaching the dereference, so the query holds only if every one of those program
+    // points is safe.
+    DemandDrivenNullnessAnalysis.Result result = DemandDrivenNullnessAnalysis.Result.SAFE;
+    for (NodeRange nodeRange : selectedNodes) {
+      if (DemandDrivenNullnessAnalysis.analyzeReference(cfg, nodeRange.node, nodeRange.node)
+          != DemandDrivenNullnessAnalysis.Result.SAFE) {
+        result = DemandDrivenNullnessAnalysis.Result.UNKNOWN;
+        break;
       }
     }
 
-    if (selectedNode == null) {
-      error(methodElement, "internal error: selected expression has no CFG node");
-    } else if (result == DemandDrivenNullnessAnalysis.Result.SAFE) {
+    Node selectedNode = selectedNodes.get(0).node;
+    if (result == DemandDrivenNullnessAnalysis.Result.SAFE) {
       trees.printMessage(
           Diagnostic.Kind.NOTE,
           String.format(
