@@ -265,6 +265,16 @@ class DemandDrivenNullnessUnknownCases {
     }
   }
 
+  void chainedAssignmentOfNullableValue(Box x, Box y) {
+    x = y = nullableValue();
+    x.foo();
+  }
+
+  void chainedAssignmentOfNull(Box x, Box y) {
+    x = y = null;
+    x.foo();
+  }
+
   // TODO: Review these tests
 
   void unsupportedEquality(Box x, Box other) {

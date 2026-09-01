@@ -223,6 +223,26 @@ public class DemandDrivenNullnessSafeTest extends DemandDrivenNullnessTestSuppor
     assertSafe("negatedNonShortCircuitDisjunction", "foo");
   }
 
+  @Test
+  public void chainedAssignment() throws URISyntaxException {
+    assertSafe("chainedAssignment", "foo");
+  }
+
+  @Test
+  public void chainedAssignmentInGuardedBranch() throws URISyntaxException {
+    assertSafe("chainedAssignmentInGuardedBranch", "foo");
+  }
+
+  @Test
+  public void chainedAssignmentOfNonNullLocal() throws URISyntaxException {
+    assertSafe("chainedAssignmentOfNonNullLocal", "foo");
+  }
+
+  @Test
+  public void assignmentAsCondition() throws URISyntaxException {
+    assertSafe("assignmentAsCondition", "foo");
+  }
+
   private static void assertSafe(String method, String targetMethod) throws URISyntaxException {
     assertResult(SOURCE, CLASS, method, targetMethod, DemandDrivenNullnessAnalysis.Result.SAFE);
   }

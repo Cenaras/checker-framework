@@ -28,7 +28,7 @@ public class DemandDrivenNullnessCheckerTest {
   @Test
   public void safeQueryPermitsCompilation() throws IOException, URISyntaxException {
     CompilationResult result =
-        compile("DemandDrivenNullnessCliSafe.java", "DemandDrivenNullnessCliSafe");
+        compile("DemandDrivenNullnessCliSafe.java", "DemandDrivenNullnessCliSafe", at(5, 7));
 
     assertTrue(result.output, result.success);
     assertTrue(result.output, result.output.contains("[demand-driven-nullness] SAFE"));
@@ -37,7 +37,7 @@ public class DemandDrivenNullnessCheckerTest {
   @Test
   public void unknownQueryFailsCompilation() throws IOException, URISyntaxException {
     CompilationResult result =
-        compile("DemandDrivenNullnessCliUnknown.java", "DemandDrivenNullnessCliUnknown");
+        compile("DemandDrivenNullnessCliUnknown.java", "DemandDrivenNullnessCliUnknown", at(4, 7));
 
     assertFalse(result.output, result.success);
     assertTrue(result.output, result.output.contains("[demand-driven-nullness] UNKNOWN"));
@@ -49,7 +49,7 @@ public class DemandDrivenNullnessCheckerTest {
         compile(
             "DemandDrivenNullnessCliDuplicatedFinally.java",
             "DemandDrivenNullnessCliDuplicatedFinally",
-            "-A" + DemandDrivenNullnessChecker.EXPRESSION_OCCURRENCE_OPTION + "=1");
+            at(14, 7));
 
     assertFalse(result.output, result.success);
     assertTrue(result.output, result.output.contains("[demand-driven-nullness] UNKNOWN"));
@@ -61,10 +61,61 @@ public class DemandDrivenNullnessCheckerTest {
         compile(
             "DemandDrivenNullnessCliSafeFinally.java",
             "DemandDrivenNullnessCliSafeFinally",
-            "-A" + DemandDrivenNullnessChecker.EXPRESSION_OCCURRENCE_OPTION + "=1");
+            at(14, 7));
 
     assertTrue(result.output, result.success);
     assertTrue(result.output, result.output.contains("[demand-driven-nullness] SAFE"));
+  }
+
+  @Test
+  public void positionSelectsTheProgramPoint() throws IOException, URISyntaxException {
+    // Line 3 is the `value != null` guard itself, where nothing has been established yet.
+    CompilationResult result =
+        compile("DemandDrivenNullnessCliSafe.java", "DemandDrivenNullnessCliSafe", at(3, 21));
+
+    assertFalse(result.output, result.success);
+    assertTrue(result.output, result.output.contains("[demand-driven-nullness] UNKNOWN"));
+  }
+
+  @Test
+  public void positionWithoutTheExpressionIsAnError() throws IOException, URISyntaxException {
+    // Line 5 column 7 is `value`; column 13 is the `toString` selector, not an expression node.
+    CompilationResult result =
+        compile("DemandDrivenNullnessCliSafe.java", "DemandDrivenNullnessCliSafe", at(5, 13));
+
+    assertFalse(result.output, result.success);
+    assertTrue(result.output, result.output.contains("was not found at 5:13"));
+    assertFalse(result.output, result.output.contains("[demand-driven-nullness] SAFE"));
+  }
+
+  @Test
+  public void positionPastTheEndOfTheFileIsAnError() throws IOException, URISyntaxException {
+    CompilationResult result =
+        compile("DemandDrivenNullnessCliSafe.java", "DemandDrivenNullnessCliSafe", at(900, 1));
+
+    assertFalse(result.output, result.success);
+    assertTrue(result.output, result.output.contains("outside the compiled source file"));
+  }
+
+  @Test
+  public void malformedPositionIsAnError() throws IOException, URISyntaxException {
+    CompilationResult result =
+        compile(
+            "DemandDrivenNullnessCliSafe.java",
+            "DemandDrivenNullnessCliSafe",
+            "-A" + DemandDrivenNullnessChecker.EXPRESSION_POSITION_OPTION + "=nonsense");
+
+    assertFalse(result.output, result.success);
+    assertTrue(result.output, result.output.contains("must be a one-based <line>:<column> pair"));
+  }
+
+  private static String at(int line, int column) {
+    return "-A"
+        + DemandDrivenNullnessChecker.EXPRESSION_POSITION_OPTION
+        + "="
+        + line
+        + ":"
+        + column;
   }
 
   private static CompilationResult compile(
@@ -82,7 +133,6 @@ public class DemandDrivenNullnessCheckerTest {
             List.of(
                 "-A" + DemandDrivenNullnessChecker.CLASS_OPTION + "=" + className,
                 "-A" + DemandDrivenNullnessChecker.METHOD_OPTION + "=target",
-                "-A" + DemandDrivenNullnessChecker.CONDITION_OPTION + "=found",
                 "-A" + DemandDrivenNullnessChecker.EXPRESSION_OPTION + "=value"));
     options.addAll(List.of(extraOptions));
     boolean success;

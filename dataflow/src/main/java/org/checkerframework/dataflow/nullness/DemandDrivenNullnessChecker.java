@@ -2,6 +2,7 @@ package org.checkerframework.dataflow.nullness;
 
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.tree.LineMap;
 import com.sun.source.tree.MethodTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.SourcePositions;
@@ -10,6 +11,7 @@ import com.sun.source.util.Trees;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Collectors;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.annotation.processing.SupportedOptions;
 import javax.lang.model.SourceVersion;
@@ -27,24 +29,29 @@ import org.checkerframework.javacutil.TreeUtils;
 /**
  * A command-line annotation processor for {@link DemandDrivenNullnessAnalysis}.
  *
- * <p>The processor verifies one {@code condition == true ==> expression != null} query. It is
- * intended to be run on a source tree reduced by Specimin, for example:
+ * <p>The processor verifies one query: is {@code expression} non-null on every path that reaches
+ * the given source position? For example:
  *
  * <pre>{@code
  * checker/bin/javac \
  *   -processor org.checkerframework.dataflow.nullness.DemandDrivenNullnessChecker \
  *   -AdemandDrivenNullnessClass=com.example.Example \
  *   -AdemandDrivenNullnessMethod=methodName \
- *   -AdemandDrivenNullnessCondition=found \
  *   -AdemandDrivenNullnessExpression=value \
+ *   -AdemandDrivenNullnessExpressionPosition=27:16 \
  *   -d build/classes \
- *   .../Example.java .../OtherSpeciminSources.java
+ *   .../Example.java .../OtherSourcesItNeeds.java
  * }</pre>
  *
- * <p>The condition and expression are matched against source expressions after javac parsing. The
- * expression occurrence is counted in source order after the selected condition occurrence. The
- * occurrence options are zero-based and default to zero. They are useful when the reduced method
- * contains the same condition or expression more than once.
+ * <p>The position is a one-based {@code line:column} pair naming where the queried expression
+ * starts, and it identifies the program point of the query. The expression text is matched against
+ * the source expression found there, so a position that does not denote {@code expression} is
+ * reported as an error rather than analyzed. Both are needed: several CFG nodes share the start
+ * position of {@code value.length()}, and the text is what picks {@code value} out of them.
+ *
+ * <p>Positions must refer to the sources handed to this compilation. A caller that reads them from
+ * a different copy of the program -- one reduced by a tool such as Specimin, say -- is responsible
+ * for translating them first.
  *
  * <p>A successful proof produces a javac note and permits compilation to succeed. An inconclusive
  * proof, an invalid query, or an ambiguous target method produces a javac error, so callers can use
@@ -54,10 +61,8 @@ import org.checkerframework.javacutil.TreeUtils;
 @SupportedOptions({
   DemandDrivenNullnessChecker.CLASS_OPTION,
   DemandDrivenNullnessChecker.METHOD_OPTION,
-  DemandDrivenNullnessChecker.CONDITION_OPTION,
   DemandDrivenNullnessChecker.EXPRESSION_OPTION,
-  DemandDrivenNullnessChecker.CONDITION_OCCURRENCE_OPTION,
-  DemandDrivenNullnessChecker.EXPRESSION_OCCURRENCE_OPTION
+  DemandDrivenNullnessChecker.EXPRESSION_POSITION_OPTION
 })
 public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
 
@@ -67,26 +72,19 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
   /** Name of the method or constructor that contains the query. */
   public static final String METHOD_OPTION = "demandDrivenNullnessMethod";
 
-  /** Source text of the boolean condition. */
-  public static final String CONDITION_OPTION = "demandDrivenNullnessCondition";
-
   /** Source text of the reference expression. */
   public static final String EXPRESSION_OPTION = "demandDrivenNullnessExpression";
 
-  /** Zero-based occurrence of the condition in the target method. */
-  public static final String CONDITION_OCCURRENCE_OPTION =
-      "demandDrivenNullnessConditionOccurrence";
-
-  /** Zero-based occurrence of the expression after the selected condition. */
-  public static final String EXPRESSION_OCCURRENCE_OPTION =
-      "demandDrivenNullnessExpressionOccurrence";
+  /**
+   * One-based {@code line:column} source position at which the queried expression starts. It names
+   * the program point of the query.
+   */
+  public static final String EXPRESSION_POSITION_OPTION = "demandDrivenNullnessExpressionPosition";
 
   private @Nullable String targetClass;
   private @Nullable String targetMethod;
-  private @Nullable String conditionText;
   private @Nullable String expressionText;
-  private int conditionOccurrence;
-  private int expressionOccurrence;
+  private @Nullable SourcePosition expressionPosition;
   private boolean configurationValid;
   private int matchingMethods;
 
@@ -97,17 +95,13 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
   public void typeProcessingStart() {
     targetClass = requiredOption(CLASS_OPTION);
     targetMethod = requiredOption(METHOD_OPTION);
-    conditionText = requiredOption(CONDITION_OPTION);
     expressionText = requiredOption(EXPRESSION_OPTION);
-    conditionOccurrence = occurrenceOption(CONDITION_OCCURRENCE_OPTION);
-    expressionOccurrence = occurrenceOption(EXPRESSION_OCCURRENCE_OPTION);
+    expressionPosition = positionOption(EXPRESSION_POSITION_OPTION);
     configurationValid =
         targetClass != null
             && targetMethod != null
-            && conditionText != null
             && expressionText != null
-            && conditionOccurrence >= 0
-            && expressionOccurrence >= 0;
+            && expressionPosition != null;
   }
 
   @Override
@@ -206,40 +200,38 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
 
     Trees trees = Trees.instance(processingEnv);
     SourcePositions positions = trees.getSourcePositions();
-    List<NodeRange> conditions = matchingNodes(cfg, root, positions, conditionText);
-    List<NodeRange> conditionRanges = distinctRanges(conditions);
-    if (conditionOccurrence >= conditionRanges.size()) {
+    SourcePosition position = expressionPosition;
+    assert position != null : "@AssumeAssertion(nullness): the configuration was validated";
+    long offset = position.offsetIn(root.getLineMap());
+    if (offset < 0) {
       error(
           methodElement,
-          String.format(
-              "condition '%s' occurrence %d was not found (found %d occurrence(s))",
-              conditionText, conditionOccurrence, conditionRanges.size()));
+          String.format("position %s is outside the compiled source file", position));
       return;
     }
 
-    NodeRange condition = conditionRanges.get(conditionOccurrence);
-    List<NodeRange> expressionNodes = matchingNodes(cfg, root, positions, expressionText);
-    expressionNodes.removeIf(nodeRange -> nodeRange.start < condition.end);
-    List<NodeRange> expressionRanges = distinctRanges(expressionNodes);
-    if (expressionOccurrence >= expressionRanges.size()) {
-      error(
-          methodElement,
-          String.format(
-              "expression '%s' occurrence %d after condition '%s' was not found "
-                  + "(found %d occurrence(s))",
-              expressionText, expressionOccurrence, conditionText, expressionRanges.size()));
-      return;
-    }
-
-    NodeRange selectedRange = expressionRanges.get(expressionOccurrence);
-    List<NodeRange> selectedNodes = new ArrayList<>();
-    for (NodeRange nodeRange : expressionNodes) {
-      if (nodeRange.start == selectedRange.start && nodeRange.end == selectedRange.end) {
-        selectedNodes.add(nodeRange);
+    // Several CFG nodes can start at one position: for `value.length()` the receiver, the method
+    // access, and the invocation all start at `value`. The expression text is what selects one.
+    List<MatchedNode> atPosition = nodesStartingAt(cfg, root, positions, offset);
+    List<MatchedNode> selectedNodes = new ArrayList<>();
+    for (MatchedNode matched : atPosition) {
+      if (normalize(matched.text).equals(normalize(expressionText))) {
+        selectedNodes.add(matched);
       }
     }
     if (selectedNodes.isEmpty()) {
-      error(methodElement, "internal error: selected expression has no CFG node");
+      String found =
+          atPosition.isEmpty()
+              ? "no expression"
+              : atPosition.stream()
+                  .map(matched -> "'" + matched.text + "'")
+                  .distinct()
+                  .collect(Collectors.joining(", "));
+      error(
+          methodElement,
+          String.format(
+              "expression '%s' was not found at %s in '%s'; found %s there",
+              expressionText, position, targetMethod, found));
       return;
     }
 
@@ -248,8 +240,8 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
     // every path reaching the dereference, so the query holds only if every one of those program
     // points is safe.
     DemandDrivenNullnessAnalysis.Result result = DemandDrivenNullnessAnalysis.Result.SAFE;
-    for (NodeRange nodeRange : selectedNodes) {
-      if (DemandDrivenNullnessAnalysis.analyzeReference(cfg, nodeRange.node, nodeRange.node)
+    for (MatchedNode matched : selectedNodes) {
+      if (DemandDrivenNullnessAnalysis.analyzeReference(cfg, matched.node, matched.node)
           != DemandDrivenNullnessAnalysis.Result.SAFE) {
         result = DemandDrivenNullnessAnalysis.Result.UNKNOWN;
         break;
@@ -261,58 +253,34 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
       trees.printMessage(
           Diagnostic.Kind.NOTE,
           String.format(
-              "[demand-driven-nullness] SAFE: '%s' is non-null when '%s' is true",
-              expressionText, conditionText),
+              "[demand-driven-nullness] SAFE: '%s' is non-null on every path reaching %s",
+              expressionText, position),
           selectedNode.getTree(),
           root);
     } else {
       trees.printMessage(
           Diagnostic.Kind.ERROR,
           String.format(
-              "[demand-driven-nullness] UNKNOWN: could not prove that '%s' is non-null when '%s' "
-                  + "is true",
-              expressionText, conditionText),
+              "[demand-driven-nullness] UNKNOWN: could not prove that '%s' is non-null on every"
+                  + " path reaching %s",
+              expressionText, position),
           selectedNode.getTree(),
           root);
     }
   }
 
-  /** Returns CFG nodes whose source tree has the requested text, ordered by source position. */
-  private static List<NodeRange> matchingNodes(
-      ControlFlowGraph cfg,
-      CompilationUnitTree root,
-      SourcePositions positions,
-      @Nullable String requestedText) {
-    String normalizedText = normalize(requestedText);
-    List<NodeRange> result = new ArrayList<>();
+  /** Returns the CFG nodes whose source tree starts at {@code offset}, shortest text first. */
+  private static List<MatchedNode> nodesStartingAt(
+      ControlFlowGraph cfg, CompilationUnitTree root, SourcePositions positions, long offset) {
+    List<MatchedNode> result = new ArrayList<>();
     for (Node node : cfg.getAllNodes()) {
       Tree tree = node.getTree();
-      if (tree == null || !normalize(tree.toString()).equals(normalizedText)) {
+      if (tree == null || positions.getStartPosition(root, tree) != offset) {
         continue;
       }
-      long start = positions.getStartPosition(root, tree);
-      long end = positions.getEndPosition(root, tree);
-      if (start >= 0 && end >= start) {
-        result.add(new NodeRange(node, start, end));
-      }
+      result.add(new MatchedNode(node, tree.toString()));
     }
-    result.sort(
-        Comparator.comparingLong((NodeRange range) -> range.start).thenComparingLong(r -> r.end));
-    return result;
-  }
-
-  /** Collapses the possibly many CFG nodes produced for one source range. */
-  private static List<NodeRange> distinctRanges(List<NodeRange> nodes) {
-    List<NodeRange> result = new ArrayList<>();
-    long previousStart = Long.MIN_VALUE;
-    long previousEnd = Long.MIN_VALUE;
-    for (NodeRange node : nodes) {
-      if (node.start != previousStart || node.end != previousEnd) {
-        result.add(node);
-        previousStart = node.start;
-        previousEnd = node.end;
-      }
-    }
+    result.sort(Comparator.comparingInt(matched -> matched.text.length()));
     return result;
   }
 
@@ -325,21 +293,28 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
     return value;
   }
 
-  private int occurrenceOption(String name) {
+  /** Parses a required one-based {@code line:column} option, or returns null when it is invalid. */
+  private @Nullable SourcePosition positionOption(String name) {
     String value = processingEnv.getOptions().get(name);
-    if (value == null) {
-      return 0;
+    if (value == null || value.isBlank()) {
+      error("missing required option -A" + name + "=<line>:<column>");
+      return null;
     }
-    try {
-      int result = Integer.parseInt(value);
-      if (result < 0) {
-        throw new NumberFormatException();
+    int separator = value.lastIndexOf(':');
+    if (separator > 0) {
+      try {
+        int line = Integer.parseInt(value.substring(0, separator).trim());
+        int column = Integer.parseInt(value.substring(separator + 1).trim());
+        if (line > 0 && column > 0) {
+          return new SourcePosition(line, column);
+        }
+      } catch (NumberFormatException ignored) {
+        // Fall through to the shared error below.
       }
-      return result;
-    } catch (NumberFormatException ignored) {
-      error("option -A" + name + " must be a non-negative integer, but was '" + value + "'");
-      return -1;
     }
+    error(
+        "option -A" + name + " must be a one-based <line>:<column> pair, but was '" + value + "'");
+    return null;
   }
 
   private void error(String message) {
@@ -363,16 +338,39 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
     return message == null ? "" : ": " + message;
   }
 
-  /** A CFG node and the half-open source range of its underlying tree. */
-  private static final class NodeRange {
+  /** A CFG node and the source text of its underlying tree. */
+  private static final class MatchedNode {
     final Node node;
-    final long start;
-    final long end;
+    final String text;
 
-    NodeRange(Node node, long start, long end) {
+    MatchedNode(Node node, String text) {
       this.node = node;
-      this.start = start;
-      this.end = end;
+      this.text = text;
+    }
+  }
+
+  /** A one-based line and column in the compiled source file. */
+  private static final class SourcePosition {
+    final int line;
+    final int column;
+
+    SourcePosition(int line, int column) {
+      this.line = line;
+      this.column = column;
+    }
+
+    /** Returns the character offset of this position, or -1 when it is out of range. */
+    long offsetIn(LineMap lineMap) {
+      try {
+        return lineMap.getPosition(line, column);
+      } catch (IndexOutOfBoundsException | IllegalArgumentException ignored) {
+        return -1;
+      }
+    }
+
+    @Override
+    public String toString() {
+      return line + ":" + column;
     }
   }
 }

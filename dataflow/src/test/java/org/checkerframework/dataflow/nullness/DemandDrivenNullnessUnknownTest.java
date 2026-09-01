@@ -175,6 +175,16 @@ public class DemandDrivenNullnessUnknownTest extends DemandDrivenNullnessTestSup
   }
 
   @Test
+  public void chainedAssignmentOfNullableValue() throws URISyntaxException {
+    assertUnknown("chainedAssignmentOfNullableValue", "foo");
+  }
+
+  @Test
+  public void chainedAssignmentOfNull() throws URISyntaxException {
+    assertUnknown("chainedAssignmentOfNull", "foo");
+  }
+
+  @Test
   public void unsupportedEquality() throws URISyntaxException {
     assertUnknown("unsupportedEquality", "foo");
   }

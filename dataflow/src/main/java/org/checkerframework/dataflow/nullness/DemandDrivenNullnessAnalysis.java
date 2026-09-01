@@ -576,6 +576,12 @@ public final class DemandDrivenNullnessAnalysis {
         // permits the normal assignment transfer and conditional-edge handling to distinguish the
         // two arms while walking backwards.
         current = ternaryExpression.getTernaryExpressionVar();
+      } else if (current instanceof AssignmentNode assignment) {
+        // An assignment used as a value, as in the chain `a = b = e`, evaluates to the value it
+        // assigned. Its nullness is therefore the nullness of `e`. Note that this unwraps only an
+        // assignment appearing in an *expression* position: `transfer` matches AssignmentNode
+        // directly, so the write itself is still modelled.
+        current = assignment.getExpression();
       } else {
         return current;
       }

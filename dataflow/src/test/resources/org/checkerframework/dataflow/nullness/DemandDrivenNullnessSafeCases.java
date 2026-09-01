@@ -331,4 +331,28 @@ class DemandDrivenNullnessSafeCases {
       x.foo();
     }
   }
+
+  void chainedAssignment(Box x, Box y) {
+    x = y = new Box();
+    x.foo();
+  }
+
+  void chainedAssignmentInGuardedBranch(Box x, Box y, boolean condition) {
+    if (condition) {
+      x = y = new Box();
+      x.foo();
+    }
+  }
+
+  void chainedAssignmentOfNonNullLocal(Box x, Box y) {
+    Box source = new Box();
+    x = y = source;
+    x.foo();
+  }
+
+  void assignmentAsCondition(Box x, Box y) {
+    if ((x = y) != null) {
+      x.foo();
+    }
+  }
 }
