@@ -243,6 +243,31 @@ public class DemandDrivenNullnessSafeTest extends DemandDrivenNullnessTestSuppor
     assertSafe("assignmentAsCondition", "foo");
   }
 
+  @Test
+  public void caughtExceptionIsNonNull() throws URISyntaxException {
+    assertSafe("caughtExceptionIsNonNull", "getMessage");
+  }
+
+  @Test
+  public void catchRecordsTheFailure() throws URISyntaxException {
+    assertSafe("catchRecordsTheFailure", "foo");
+  }
+
+  @Test
+  public void reassignedCatchParameterStaysNonNull() throws URISyntaxException {
+    assertSafe("reassignedCatchParameterStaysNonNull", "getMessage");
+  }
+
+  @Test
+  public void multiCatchIsNonNull() throws URISyntaxException {
+    assertSafe("multiCatchIsNonNull", "getMessage");
+  }
+
+  @Test
+  public void caughtExceptionThroughAlias() throws URISyntaxException {
+    assertSafe("caughtExceptionThroughAlias", "getMessage");
+  }
+
   private static void assertSafe(String method, String targetMethod) throws URISyntaxException {
     assertResult(SOURCE, CLASS, method, targetMethod, DemandDrivenNullnessAnalysis.Result.SAFE);
   }

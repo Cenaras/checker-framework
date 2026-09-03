@@ -9,6 +9,7 @@ import static org.checkerframework.dataflow.logic.PropositionalFormulas.substitu
 import static org.checkerframework.dataflow.logic.PropositionalFormulas.trueFormula;
 
 import com.sun.source.tree.Tree;
+import com.sun.source.tree.VariableTree;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -16,9 +17,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.TypeKind;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.dataflow.cfg.ControlFlowGraph;
+import org.checkerframework.dataflow.cfg.UnderlyingAST;
 import org.checkerframework.dataflow.cfg.block.Block;
 import org.checkerframework.dataflow.cfg.block.ConditionalBlock;
 import org.checkerframework.dataflow.cfg.node.ArrayAccessNode;
@@ -39,13 +44,16 @@ import org.checkerframework.dataflow.cfg.node.Node;
 import org.checkerframework.dataflow.cfg.node.NotEqualNode;
 import org.checkerframework.dataflow.cfg.node.NullLiteralNode;
 import org.checkerframework.dataflow.cfg.node.ObjectCreationNode;
+import org.checkerframework.dataflow.cfg.node.ReturnNode;
 import org.checkerframework.dataflow.cfg.node.StringLiteralNode;
 import org.checkerframework.dataflow.cfg.node.TernaryExpressionNode;
 import org.checkerframework.dataflow.cfg.node.ThisNode;
 import org.checkerframework.dataflow.cfg.node.TypeCastNode;
+import org.checkerframework.dataflow.cfg.node.VariableDeclarationNode;
 import org.checkerframework.dataflow.logic.PropositionalFormula;
 import org.checkerframework.dataflow.logic.SatSolver;
 import org.checkerframework.dataflow.logic.Z3SatSolver;
+import org.checkerframework.javacutil.TreeUtils;
 
 /**
  * A demand-driven analysis that proves that the base of one dereference is non-null.
@@ -82,11 +90,32 @@ public final class DemandDrivenNullnessAnalysis {
   private static final SatSolver DEFAULT_SOLVER = new Z3SatSolver();
 
   private final SatSolver solver;
+
+  /**
+   * The block at which a backwards path leaves the method, or null when paths that reach it are
+   * never justified. Only the entry block may discharge a path using {@link #entryAssumption}.
+   */
+  private final @Nullable Block entryBlock;
+
+  /**
+   * What is assumed to hold on entry to the method, for example a contract's precondition on a
+   * parameter. {@link #TRUE} for an unconditional query, in which case a satisfiable formula that
+   * reaches the entry is never discharged.
+   */
+  private final PropositionalFormula entryAssumption;
+
   private int pathSteps;
   private long freshAtomId = -1;
 
   private DemandDrivenNullnessAnalysis(SatSolver solver) {
+    this(solver, null, TRUE);
+  }
+
+  private DemandDrivenNullnessAnalysis(
+      SatSolver solver, @Nullable Block entryBlock, PropositionalFormula entryAssumption) {
     this.solver = solver;
+    this.entryBlock = entryBlock;
+    this.entryAssumption = entryAssumption;
   }
 
   /**
@@ -161,10 +190,6 @@ public final class DemandDrivenNullnessAnalysis {
   /**
    * Analyze an explicitly supplied base expression immediately before a dereference.
    *
-   * <p>This overload is useful for dereference kinds not recognized by {@link
-   * #analyze(ControlFlowGraph, Node)}. The dereference node must occur in {@code cfg}; unsupported
-   * base expressions result in {@link Result#UNKNOWN}.
-   *
    * @param cfg the CFG for the containing method
    * @param dereference the node immediately after the program point being queried
    * @param base the expression whose nullness is queried
@@ -176,10 +201,6 @@ public final class DemandDrivenNullnessAnalysis {
 
   /**
    * Analyze the nullness of a reference at an arbitrary program point.
-   *
-   * <p>Unlike the primary overload, {@code programPoint} need not itself be a dereference. For
-   * example, callers can query an argument passed to {@code foo(apps)} by supplying the invocation
-   * as the program point and the argument node as {@code reference}.
    *
    * @param cfg the CFG for the containing method
    * @param programPoint the node immediately after the program point being queried
@@ -237,6 +258,115 @@ public final class DemandDrivenNullnessAnalysis {
     return allPathsContradictNull ? Result.SAFE : Result.UNKNOWN;
   }
 
+  /**
+   * Verify a conditional return contract: does the method return a non-null value on every normal
+   * return, given that one boolean parameter had a particular value on entry?
+   *
+   * @param cfg the CFG for the method whose contract is being verified
+   * @param parameterIndex the one-based position of the boolean parameter
+   * @param parameterValue the parameter value under which the guarantee is claimed
+   * @return whether every normal return has been proven non-null under that precondition
+   */
+  public static Result analyzeReturnsNonNullIf(
+      ControlFlowGraph cfg, int parameterIndex, boolean parameterValue) {
+    return analyzeReturnsNonNullIf(cfg, parameterIndex, parameterValue, DEFAULT_SOLVER);
+  }
+
+  /**
+   * Verify a conditional return contract using a caller-supplied SAT backend.
+   *
+   * @param cfg the CFG for the method whose contract is being verified
+   * @param parameterIndex the one-based position of the boolean parameter
+   * @param parameterValue the parameter value under which the guarantee is claimed
+   * @param solver the backend used to decide path formulas
+   * @return whether every normal return has been proven non-null under that precondition
+   */
+  public static Result analyzeReturnsNonNullIf(
+      ControlFlowGraph cfg, int parameterIndex, boolean parameterValue, SatSolver solver) {
+    Objects.requireNonNull(cfg);
+    Objects.requireNonNull(solver);
+
+    if (!returnsAReference(cfg)) {
+      // A void method, a constructor, or a primitive-returning method has no nullness to promise.
+      // This matters because CFGBuilder emits no ReturnNode for a bare `return;`, so without this
+      // check a void method would look like one that never returns.
+      return Result.UNKNOWN;
+    }
+    VariableElement parameter = booleanParameter(cfg, parameterIndex);
+    if (parameter == null) {
+      return Result.UNKNOWN;
+    }
+
+    PropositionalFormula parameterHolds =
+        atom(new PredicateAtom(PredicateKind.IS_TRUE, new VariableReference(parameter)));
+    PropositionalFormula precondition = parameterValue ? parameterHolds : not(parameterHolds);
+    DemandDrivenNullnessAnalysis analysis =
+        new DemandDrivenNullnessAnalysis(solver, cfg.getEntryBlock(), precondition);
+
+    for (Node node : cfg.getAllNodes()) {
+      if (!(node instanceof ReturnNode returnNode)) {
+        continue;
+      }
+      Node result = returnNode.getResult();
+      if (result == null) {
+        // A bare `return;` returns no value, so there is nothing for the contract to guarantee.
+        return Result.UNKNOWN;
+      }
+      Block block = returnNode.getBlock();
+      if (block == null) {
+        return Result.UNKNOWN;
+      }
+      int index = identityIndexOf(block.getNodes(), returnNode);
+      if (index < 0) {
+        return Result.UNKNOWN;
+      }
+      // Initial assumption: this return statement returns null.
+      Set<Block> path = Collections.newSetFromMap(new IdentityHashMap<>());
+      if (!analysis.allPathsUnsatisfiable(block, index, analysis.nullnessFormula(result), path)) {
+        return Result.UNKNOWN;
+      }
+    }
+    // A method with no return statement always throws, so it has no returning path to falsify.
+    return Result.SAFE;
+  }
+
+  /** Returns whether the method's declared return type is one that can hold null. */
+  private static boolean returnsAReference(ControlFlowGraph cfg) {
+    if (!(cfg.getUnderlyingAST() instanceof UnderlyingAST.CFGMethod method)) {
+      return false;
+    }
+    ExecutableElement element = TreeUtils.elementFromDeclaration(method.getMethod());
+    if (element == null) {
+      return false;
+    }
+    // A constructor's element also reports VOID, so this rejects constructors too.
+    return switch (element.getReturnType().getKind()) {
+      case DECLARED, ARRAY, TYPEVAR -> true;
+      default -> false;
+    };
+  }
+
+  /**
+   * Returns the method's boolean parameter at a one-based index, or null if there is no such one.
+   */
+  private static @Nullable VariableElement booleanParameter(
+      ControlFlowGraph cfg, int parameterIndex) {
+    if (!(cfg.getUnderlyingAST() instanceof UnderlyingAST.CFGMethod method)) {
+      return null;
+    }
+    List<? extends VariableTree> parameters = method.getMethod().getParameters();
+    if (parameterIndex < 1 || parameterIndex > parameters.size()) {
+      return null;
+    }
+    VariableElement element = TreeUtils.elementFromDeclaration(parameters.get(parameterIndex - 1));
+    if (element == null || element.asType().getKind() != TypeKind.BOOLEAN) {
+      // A boxed Boolean is deliberately rejected: it can be null, so "the parameter is true" is
+      // not the negation of "the parameter is false".
+      return null;
+    }
+    return element;
+  }
+
   /** Returns true only if all backward paths from this program point are unsatisfiable. */
   private boolean allPathsUnsatisfiable(
       Block block, int nodesBeforePoint, PropositionalFormula formula, Set<Block> path) {
@@ -260,9 +390,11 @@ public final class DemandDrivenNullnessAnalysis {
 
       Set<Block> predecessors = block.getPredecessors();
       if (predecessors.isEmpty()) {
-        // A satisfiable assumption made it to an entry (or malformed dead-end) block.
-        // TODO: Inject a @Contract precondition and verify unsat here
-        return false;
+        // A satisfiable assumption made it to an entry (or malformed dead-end) block. Every
+        // intervening assignment has already been substituted, so the formula now speaks about the
+        // state on entry and a contract's precondition can discharge it. A predecessor-less block
+        // that is not the entry is left unjustified rather than assumed unreachable.
+        return block == entryBlock && isUnsatisfiable(and(current, entryAssumption));
       }
 
       for (Block predecessor : predecessors) {
@@ -300,7 +432,30 @@ public final class DemandDrivenNullnessAnalysis {
     if (isPotentiallySideEffectingCall(node)) {
       return havocFields(formula);
     }
+    VariableElement caught = caughtException(node);
+    if (caught != null) {
+      // A caught value is never null: `throw null` throws a NullPointerException instead. A later
+      // write to the parameter was substituted away by the assignment case above.
+      return assumeNonNull(formula, new VariableReference(caught));
+    }
     return formula;
+  }
+
+  /** Returns the exception parameter a node binds, or null if it binds none. */
+  private static @Nullable VariableElement caughtException(Node node) {
+    if (!(node instanceof VariableDeclarationNode declaration)) {
+      return null;
+    }
+    VariableElement element = TreeUtils.elementFromDeclaration(declaration.getTree());
+    return element != null && element.getKind() == ElementKind.EXCEPTION_PARAMETER ? element : null;
+  }
+
+  /**
+   * Discharges the hypothesis that {@code reference} is null. A field reached through it is not.
+   */
+  private PropositionalFormula assumeNonNull(PropositionalFormula formula, Reference reference) {
+    PredicateAtom isNull = new PredicateAtom(PredicateKind.IS_NULL, reference);
+    return substitute(formula, key -> isNull.equals(key) ? FALSE : atom(key));
   }
 
   /** Computes the condition required to traverse {@code predecessor -> successor}. */

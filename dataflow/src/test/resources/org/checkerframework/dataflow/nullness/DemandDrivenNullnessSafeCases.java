@@ -355,4 +355,53 @@ class DemandDrivenNullnessSafeCases {
       x.foo();
     }
   }
+
+  void caughtExceptionIsNonNull() {
+    try {
+      arbitraryCall();
+    } catch (RuntimeException e) {
+      e.getMessage();
+    }
+  }
+
+  void catchRecordsTheFailure(Box x) {
+    Throwable failure = null;
+    if (x == null) {
+      try {
+        x = new Box();
+      } catch (Throwable t) {
+        failure = t;
+      }
+    }
+    if (failure != null) {
+      return;
+    }
+    x.foo();
+  }
+
+  void reassignedCatchParameterStaysNonNull() {
+    try {
+      arbitraryCall();
+    } catch (RuntimeException e) {
+      e = new RuntimeException();
+      e.getMessage();
+    }
+  }
+
+  void multiCatchIsNonNull() {
+    try {
+      arbitraryCall();
+    } catch (IllegalStateException | IllegalArgumentException e) {
+      e.getMessage();
+    }
+  }
+
+  void caughtExceptionThroughAlias() {
+    try {
+      arbitraryCall();
+    } catch (RuntimeException e) {
+      Throwable alias = e;
+      alias.getMessage();
+    }
+  }
 }

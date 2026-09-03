@@ -321,4 +321,22 @@ class DemandDrivenNullnessUnknownCases {
       x.foo();
     }
   }
+
+  void catchParameterAssignedNull() {
+    try {
+      arbitraryCall();
+    } catch (RuntimeException e) {
+      e = null;
+      e.getMessage();
+    }
+  }
+
+  void fieldOfCaughtExceptionIsUnknown() {
+    try {
+      arbitraryCall();
+    } catch (RuntimeException e) {
+      Throwable cause = e.getCause();
+      cause.getMessage();
+    }
+  }
 }

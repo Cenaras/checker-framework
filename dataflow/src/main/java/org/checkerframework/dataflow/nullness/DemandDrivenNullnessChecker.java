@@ -5,6 +5,7 @@ import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.LineMap;
 import com.sun.source.tree.MethodTree;
 import com.sun.source.tree.Tree;
+import com.sun.source.tree.VariableTree;
 import com.sun.source.util.SourcePositions;
 import com.sun.source.util.TreePathScanner;
 import com.sun.source.util.Trees;
@@ -18,6 +19,8 @@ import javax.lang.model.SourceVersion;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.TypeKind;
 import javax.tools.Diagnostic;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.dataflow.cfg.ControlFlowGraph;
@@ -29,8 +32,10 @@ import org.checkerframework.javacutil.TreeUtils;
 /**
  * A command-line annotation processor for {@link DemandDrivenNullnessAnalysis}.
  *
- * <p>The processor verifies one query: is {@code expression} non-null on every path that reaches
- * the given source position? For example:
+ * <p>The processor verifies one of two queries.
+ *
+ * <p><b>Expression query.</b> Is {@code expression} non-null on every path that reaches the given
+ * source position? For example:
  *
  * <pre>{@code
  * checker/bin/javac \
@@ -53,6 +58,26 @@ import org.checkerframework.javacutil.TreeUtils;
  * a different copy of the program -- one reduced by a tool such as Specimin, say -- is responsible
  * for translating them first.
  *
+ * <p><b>Conditional return query.</b> Does the method return a non-null value on every normal
+ * return, given that one boolean parameter had a particular value on entry? This is the contract
+ * JetBrains writes as {@code @Contract("_,true->!null")}. Select it by naming the parameter instead
+ * of an expression:
+ *
+ * <pre>{@code
+ * checker/bin/javac \
+ *   -processor org.checkerframework.dataflow.nullness.DemandDrivenNullnessChecker \
+ *   -AdemandDrivenNullnessClass=com.example.Example \
+ *   -AdemandDrivenNullnessMethod=find \
+ *   -AdemandDrivenNullnessParameter=#2 \
+ *   -AdemandDrivenNullnessParameterValue=true \
+ *   -d build/classes \
+ *   .../Example.java
+ * }</pre>
+ *
+ * <p>The parameter is one-based and written {@code #i}, matching how a contract names it. The two
+ * queries are mutually exclusive: supply either an expression and its position, or a parameter and
+ * its value.
+ *
  * <p>A successful proof produces a javac note and permits compilation to succeed. An inconclusive
  * proof, an invalid query, or an ambiguous target method produces a javac error, so callers can use
  * the compiler process's exit status as the verification result.
@@ -62,7 +87,9 @@ import org.checkerframework.javacutil.TreeUtils;
   DemandDrivenNullnessChecker.CLASS_OPTION,
   DemandDrivenNullnessChecker.METHOD_OPTION,
   DemandDrivenNullnessChecker.EXPRESSION_OPTION,
-  DemandDrivenNullnessChecker.EXPRESSION_POSITION_OPTION
+  DemandDrivenNullnessChecker.EXPRESSION_POSITION_OPTION,
+  DemandDrivenNullnessChecker.PARAMETER_OPTION,
+  DemandDrivenNullnessChecker.PARAMETER_VALUE_OPTION
 })
 public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
 
@@ -81,10 +108,31 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
    */
   public static final String EXPRESSION_POSITION_OPTION = "demandDrivenNullnessExpressionPosition";
 
+  /**
+   * One-based position of the boolean parameter a conditional return contract is about, written
+   * {@code #i}. Its presence selects the conditional return query.
+   */
+  public static final String PARAMETER_OPTION = "demandDrivenNullnessParameter";
+
+  /** The value of {@link #PARAMETER_OPTION} under which the return guarantee is claimed. */
+  public static final String PARAMETER_VALUE_OPTION = "demandDrivenNullnessParameterValue";
+
+  /** Which of the two queries this invocation verifies. */
+  private enum QueryKind {
+    /** Is an expression non-null at a source position? */
+    EXPRESSION,
+
+    /** Does the method return non-null whenever a boolean parameter has a given value? */
+    RETURNS_NON_NULL_IF
+  }
+
   private @Nullable String targetClass;
   private @Nullable String targetMethod;
+  private QueryKind queryKind = QueryKind.EXPRESSION;
   private @Nullable String expressionText;
   private @Nullable SourcePosition expressionPosition;
+  private int parameterIndex;
+  private @Nullable Boolean parameterValue;
   private boolean configurationValid;
   private int matchingMethods;
 
@@ -95,13 +143,29 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
   public void typeProcessingStart() {
     targetClass = requiredOption(CLASS_OPTION);
     targetMethod = requiredOption(METHOD_OPTION);
+    boolean targetValid = targetClass != null && targetMethod != null;
+
+    if (processingEnv.getOptions().containsKey(PARAMETER_OPTION)) {
+      queryKind = QueryKind.RETURNS_NON_NULL_IF;
+      parameterIndex = parameterOption(PARAMETER_OPTION);
+      parameterValue = booleanOption(PARAMETER_VALUE_OPTION);
+      configurationValid =
+          targetValid
+              && parameterIndex > 0
+              && parameterValue != null
+              && rejectOption(EXPRESSION_OPTION, PARAMETER_OPTION)
+              && rejectOption(EXPRESSION_POSITION_OPTION, PARAMETER_OPTION);
+      return;
+    }
+
+    queryKind = QueryKind.EXPRESSION;
     expressionText = requiredOption(EXPRESSION_OPTION);
     expressionPosition = positionOption(EXPRESSION_POSITION_OPTION);
     configurationValid =
-        targetClass != null
-            && targetMethod != null
+        targetValid
             && expressionText != null
-            && expressionPosition != null;
+            && expressionPosition != null
+            && rejectOption(PARAMETER_VALUE_OPTION, EXPRESSION_OPTION);
   }
 
   @Override
@@ -199,6 +263,11 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
     }
 
     Trees trees = Trees.instance(processingEnv);
+    if (queryKind == QueryKind.RETURNS_NON_NULL_IF) {
+      verifyReturnsNonNullIf(root, methodTree, methodElement, cfg, trees);
+      return;
+    }
+
     SourcePositions positions = trees.getSourcePositions();
     SourcePosition position = expressionPosition;
     assert position != null : "@AssumeAssertion(nullness): the configuration was validated";
@@ -269,6 +338,75 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
     }
   }
 
+  /** Verifies that the method returns non-null whenever the selected parameter has its value. */
+  private void verifyReturnsNonNullIf(
+      CompilationUnitTree root,
+      MethodTree methodTree,
+      ExecutableElement methodElement,
+      ControlFlowGraph cfg,
+      Trees trees) {
+    Boolean value = parameterValue;
+    assert value != null : "@AssumeAssertion(nullness): the configuration was validated";
+
+    List<? extends VariableTree> parameters = methodTree.getParameters();
+    if (parameterIndex > parameters.size()) {
+      error(
+          methodElement,
+          String.format(
+              "'%s' has %d parameter(s), so #%d does not exist",
+              targetMethod, parameters.size(), parameterIndex));
+      return;
+    }
+    VariableTree parameter = parameters.get(parameterIndex - 1);
+    VariableElement parameterElement = TreeUtils.elementFromDeclaration(parameter);
+    if (parameterElement == null || parameterElement.asType().getKind() != TypeKind.BOOLEAN) {
+      // A boxed Boolean is rejected too: it can be null, so "is true" is not the negation of
+      // "is false" and the contract's two cases would not partition the parameter's values.
+      error(
+          methodElement,
+          String.format(
+              "#%d of '%s' is '%s', but a conditional return contract requires a boolean parameter",
+              parameterIndex, targetMethod, parameter.getType()));
+      return;
+    }
+    boolean returnsAReference =
+        switch (methodElement.getReturnType().getKind()) {
+          case DECLARED, ARRAY, TYPEVAR -> true;
+          default -> false;
+        };
+    if (!returnsAReference) {
+      // A constructor's element reports VOID as well, so this covers those too.
+      error(
+          methodElement,
+          String.format(
+              "'%s' returns '%s', which cannot be null, so it has no non-null contract to prove",
+              targetMethod, methodElement.getReturnType()));
+      return;
+    }
+
+    DemandDrivenNullnessAnalysis.Result result =
+        DemandDrivenNullnessAnalysis.analyzeReturnsNonNullIf(cfg, parameterIndex, value);
+    if (result == DemandDrivenNullnessAnalysis.Result.SAFE) {
+      trees.printMessage(
+          Diagnostic.Kind.NOTE,
+          String.format(
+              "[demand-driven-nullness] SAFE: '%s' returns non-null on every normal return when"
+                  + " #%d is %s",
+              targetMethod, parameterIndex, value),
+          methodTree,
+          root);
+    } else {
+      trees.printMessage(
+          Diagnostic.Kind.ERROR,
+          String.format(
+              "[demand-driven-nullness] UNKNOWN: could not prove that '%s' returns non-null on"
+                  + " every normal return when #%d is %s",
+              targetMethod, parameterIndex, value),
+          methodTree,
+          root);
+    }
+  }
+
   /** Returns the CFG nodes whose source tree starts at {@code offset}, shortest text first. */
   private static List<MatchedNode> nodesStartingAt(
       ControlFlowGraph cfg, CompilationUnitTree root, SourcePositions positions, long offset) {
@@ -291,6 +429,53 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
       return null;
     }
     return value;
+  }
+
+  /** Parses a required {@code #i} parameter option, or returns -1 when it is invalid. */
+  private int parameterOption(String name) {
+    String value = processingEnv.getOptions().get(name);
+    if (value != null) {
+      String digits = value.trim().startsWith("#") ? value.trim().substring(1) : value.trim();
+      try {
+        int result = Integer.parseInt(digits);
+        if (result > 0) {
+          return result;
+        }
+      } catch (NumberFormatException ignored) {
+        // Fall through to the shared error below.
+      }
+    }
+    error(
+        "option -A"
+            + name
+            + " must be a one-based parameter reference such as '#2', but was '"
+            + value
+            + "'");
+    return -1;
+  }
+
+  /** Parses a required {@code true}/{@code false} option, or returns null when it is invalid. */
+  private @Nullable Boolean booleanOption(String name) {
+    String value = processingEnv.getOptions().get(name);
+    if ("true".equals(value)) {
+      return Boolean.TRUE;
+    }
+    if ("false".equals(value)) {
+      return Boolean.FALSE;
+    }
+    error("option -A" + name + " must be exactly 'true' or 'false', but was '" + value + "'");
+    return null;
+  }
+
+  /**
+   * Reports an option that does not belong to the selected query. Returns whether it was absent.
+   */
+  private boolean rejectOption(String name, String selectedBy) {
+    if (!processingEnv.getOptions().containsKey(name)) {
+      return true;
+    }
+    error("option -A" + name + " cannot be combined with -A" + selectedBy);
+    return false;
   }
 
   /** Parses a required one-based {@code line:column} option, or returns null when it is invalid. */

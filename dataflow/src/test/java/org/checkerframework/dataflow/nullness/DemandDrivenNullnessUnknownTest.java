@@ -65,6 +65,16 @@ public class DemandDrivenNullnessUnknownTest extends DemandDrivenNullnessTestSup
   }
 
   @Test
+  public void catchParameterAssignedNull() throws URISyntaxException {
+    assertUnknown("catchParameterAssignedNull", "getMessage");
+  }
+
+  @Test
+  public void fieldOfCaughtExceptionIsUnknown() throws URISyntaxException {
+    assertUnknown("fieldOfCaughtExceptionIsUnknown", "getMessage");
+  }
+
+  @Test
   public void loopIsUnsupported() throws URISyntaxException {
     assertUnknown("loopIsUnsupported", "foo");
   }
