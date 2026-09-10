@@ -48,8 +48,7 @@ public class IntegrationTest extends DemandDrivenNullnessTestSupport {
         sourceRoot.endsWith("error-10/")
             ? "com.netflix.eureka.registry.RemoteRegionRegistry"
             : "com.netflix.eureka.resources.ApplicationsResource";
-    ControlFlowGraph cfg =
-        generateCfg(sourceFile, className, method, sourceRoot);
+    ControlFlowGraph cfg = generateCfg(sourceFile, className, method, sourceRoot);
     MethodInvocationNode target;
     Node reference;
     if (sourceRoot.endsWith("error-10/")) {
@@ -64,8 +63,7 @@ public class IntegrationTest extends DemandDrivenNullnessTestSupport {
         DemandDrivenNullnessAnalysis.analyzeReference(cfg, target, reference));
   }
 
-  private static MethodInvocationNode findApplicationsSet(
-      ControlFlowGraph cfg, String method) {
+  private static MethodInvocationNode findApplicationsSet(ControlFlowGraph cfg, String method) {
     MethodInvocationNode result = null;
     for (Node node : cfg.getAllNodes()) {
       if (node instanceof MethodInvocationNode invocation

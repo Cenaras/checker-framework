@@ -19,6 +19,7 @@ import java.util.Objects;
 import java.util.Set;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeKind;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -82,6 +83,63 @@ public final class DemandDrivenNullnessAnalysis {
     UNKNOWN
   }
 
+  /**
+   * What the caller permits the analysis to take for granted about code it does not model.
+   *
+   * <p>An assumption is a claim the caller is responsible for. The analysis does not check it, and
+   * a wrong one produces a wrong {@link Result#SAFE}, so a query answered under any assumption
+   * other than {@link #NONE} is only as good as the claim behind it.
+   */
+  public record Assumptions(boolean pureCalls, Set<String> nonNullReturningMethods) {
+
+    /** Copies the method set, so an assumption cannot change after a query has started. */
+    public Assumptions {
+      nonNullReturningMethods = Set.copyOf(nonNullReturningMethods);
+    }
+
+    /** Assume nothing. Every call may mutate any field, and every call may return null. */
+    public static final Assumptions NONE = new Assumptions(false, Set.of());
+
+    /**
+     * Assume no method or constructor call mutates a field, so facts about fields survive a call.
+     *
+     * <p>This is an assumption about side effects only. It says nothing about what a call returns:
+     * the result of {@code foo()} remains unconstrained, so {@code x = foo()} still leaves {@code
+     * x} possibly null. It also does not make two calls to one method interchangeable, and it does
+     * not excuse an assignment written inside a call's arguments, which is a write in the caller's
+     * own code and is still applied.
+     */
+    public static final Assumptions PURE_CALLS = new Assumptions(true, Set.of());
+
+    /**
+     * Assume that the named methods never return null, so their result is non-null wherever it is
+     * used rather than unconstrained.
+     *
+     * <p>Each entry is {@code <owner>#<method>}, where the owner is the type's fully qualified name
+     * as {@link TypeElement#getQualifiedName()} reports it and the method is its simple name, for
+     * example {@code retrofit2.OkHttpCall#createRawCall}. An entry covers every overload of that
+     * name declared by that owner. A call is matched by the method the compiler resolved it to, so
+     * an assumption about an implementation does not apply to a call made through the interface it
+     * implements; name the interface method for that.
+     *
+     * <p>This is an assumption about return values only. It says nothing about side effects: a call
+     * still invalidates facts about fields unless {@link #pureCalls} is also assumed.
+     */
+    public Assumptions withNonNullReturns(Set<String> methods) {
+      return new Assumptions(pureCalls, methods);
+    }
+
+    /** Returns whether the caller has claimed that {@code method} never returns null. */
+    boolean assumesNonNullReturn(ExecutableElement method) {
+      if (nonNullReturningMethods.isEmpty()) {
+        return false;
+      }
+      return method.getEnclosingElement() instanceof TypeElement owner
+          && nonNullReturningMethods.contains(
+              owner.getQualifiedName() + "#" + method.getSimpleName());
+    }
+  }
+
   /** A limit that prevents an unexpectedly large CFG from causing path explosion. */
   private static final int MAX_PATH_STEPS = 10_000;
 
@@ -104,18 +162,25 @@ public final class DemandDrivenNullnessAnalysis {
    */
   private final PropositionalFormula entryAssumption;
 
+  /** What this query may take for granted about code the analysis does not model. */
+  private final Assumptions assumptions;
+
   private int pathSteps;
   private long freshAtomId = -1;
 
-  private DemandDrivenNullnessAnalysis(SatSolver solver) {
-    this(solver, null, TRUE);
+  private DemandDrivenNullnessAnalysis(SatSolver solver, Assumptions assumptions) {
+    this(solver, null, TRUE, assumptions);
   }
 
   private DemandDrivenNullnessAnalysis(
-      SatSolver solver, @Nullable Block entryBlock, PropositionalFormula entryAssumption) {
+      SatSolver solver,
+      @Nullable Block entryBlock,
+      PropositionalFormula entryAssumption,
+      Assumptions assumptions) {
     this.solver = solver;
     this.entryBlock = entryBlock;
     this.entryAssumption = entryAssumption;
+    this.assumptions = assumptions;
   }
 
   /**
@@ -218,6 +283,16 @@ public final class DemandDrivenNullnessAnalysis {
   }
 
   /**
+   * Analyze a reference at an arbitrary program point under the given assumptions.
+   *
+   * @param assumptions what the caller permits the analysis to take for granted
+   */
+  public static Result analyzeReference(
+      ControlFlowGraph cfg, Node programPoint, Node reference, Assumptions assumptions) {
+    return analyze(cfg, programPoint, reference, DEFAULT_SOLVER, assumptions);
+  }
+
+  /**
    * Analyze an explicitly supplied base expression using a caller-supplied SAT backend.
    *
    * @param cfg the CFG for the containing method
@@ -228,13 +303,40 @@ public final class DemandDrivenNullnessAnalysis {
    */
   public static Result analyze(
       ControlFlowGraph cfg, Node dereference, Node base, SatSolver solver) {
+    return analyze(cfg, dereference, base, solver, Assumptions.NONE);
+  }
+
+  /**
+   * Analyze an explicitly supplied base expression under the given assumptions.
+   *
+   * @param cfg the CFG for the containing method
+   * @param dereference the node immediately after the program point being queried
+   * @param base the expression whose nullness is queried
+   * @param solver the backend used to decide path formulas
+   * @param assumptions what the caller permits the analysis to take for granted
+   * @return whether {@code base} has been proven non-null
+   */
+  public static Result analyze(
+      ControlFlowGraph cfg,
+      Node dereference,
+      Node base,
+      SatSolver solver,
+      Assumptions assumptions) {
     Objects.requireNonNull(cfg);
     Objects.requireNonNull(dereference);
     Objects.requireNonNull(base);
     Objects.requireNonNull(solver);
+    Objects.requireNonNull(assumptions);
 
     Reference baseReference = createSymbolReference(base);
     if (baseReference == null) {
+      // The base is not an access path the analysis can track. It still needs no path reasoning
+      // when it is a call the caller has claimed never returns null, which keeps `foo().bar()`
+      // consistent with `x = foo(); x.bar();` under the same assumption.
+      if (unwrap(base) instanceof MethodInvocationNode invocation
+          && assumptions.assumesNonNullReturn(invocation.getTarget().getMethod())) {
+        return Result.SAFE;
+      }
       return Result.UNKNOWN;
     }
 
@@ -247,7 +349,7 @@ public final class DemandDrivenNullnessAnalysis {
       return Result.SAFE;
     }
 
-    DemandDrivenNullnessAnalysis analysis = new DemandDrivenNullnessAnalysis(solver);
+    DemandDrivenNullnessAnalysis analysis = new DemandDrivenNullnessAnalysis(solver, assumptions);
     // Initial assumption: reference == null.
     PropositionalFormula nullAtDereference =
         atom(new PredicateAtom(PredicateKind.IS_NULL, baseReference));
@@ -283,8 +385,44 @@ public final class DemandDrivenNullnessAnalysis {
    */
   public static Result analyzeReturnsNonNullIf(
       ControlFlowGraph cfg, int parameterIndex, boolean parameterValue, SatSolver solver) {
+    return analyzeReturnsNonNullIf(cfg, parameterIndex, parameterValue, solver, Assumptions.NONE);
+  }
+
+  /**
+   * Verify a conditional return contract under the given assumptions.
+   *
+   * @param cfg the CFG for the method whose contract is being verified
+   * @param parameterIndex the one-based position of the boolean parameter
+   * @param parameterValue the parameter value under which the guarantee is claimed
+   * @param assumptions what the caller permits the analysis to take for granted
+   * @return whether every normal return has been proven non-null under that precondition
+   */
+  public static Result analyzeReturnsNonNullIf(
+      ControlFlowGraph cfg, int parameterIndex, boolean parameterValue, Assumptions assumptions) {
+    return analyzeReturnsNonNullIf(
+        cfg, parameterIndex, parameterValue, DEFAULT_SOLVER, assumptions);
+  }
+
+  /**
+   * Verify a conditional return contract using a caller-supplied SAT backend, under the given
+   * assumptions.
+   *
+   * @param cfg the CFG for the method whose contract is being verified
+   * @param parameterIndex the one-based position of the boolean parameter
+   * @param parameterValue the parameter value under which the guarantee is claimed
+   * @param solver the backend used to decide path formulas
+   * @param assumptions what the caller permits the analysis to take for granted
+   * @return whether every normal return has been proven non-null under that precondition
+   */
+  public static Result analyzeReturnsNonNullIf(
+      ControlFlowGraph cfg,
+      int parameterIndex,
+      boolean parameterValue,
+      SatSolver solver,
+      Assumptions assumptions) {
     Objects.requireNonNull(cfg);
     Objects.requireNonNull(solver);
+    Objects.requireNonNull(assumptions);
 
     if (!returnsAReference(cfg)) {
       // A void method, a constructor, or a primitive-returning method has no nullness to promise.
@@ -301,7 +439,7 @@ public final class DemandDrivenNullnessAnalysis {
         atom(new PredicateAtom(PredicateKind.IS_TRUE, new VariableReference(parameter)));
     PropositionalFormula precondition = parameterValue ? parameterHolds : not(parameterHolds);
     DemandDrivenNullnessAnalysis analysis =
-        new DemandDrivenNullnessAnalysis(solver, cfg.getEntryBlock(), precondition);
+        new DemandDrivenNullnessAnalysis(solver, cfg.getEntryBlock(), precondition, assumptions);
 
     for (Node node : cfg.getAllNodes()) {
       if (!(node instanceof ReturnNode returnNode)) {
@@ -702,7 +840,7 @@ public final class DemandDrivenNullnessAnalysis {
   }
 
   /** Returns whether evaluating {@code root} may invoke user code that can mutate fields. */
-  private static boolean containsPotentiallySideEffectingCall(Node root) {
+  private boolean containsPotentiallySideEffectingCall(Node root) {
     if (isPotentiallySideEffectingCall(root)) {
       return true;
     }
@@ -714,8 +852,15 @@ public final class DemandDrivenNullnessAnalysis {
     return false;
   }
 
-  /** Returns whether evaluating {@code node} invokes arbitrary method or constructor code. */
-  private static boolean isPotentiallySideEffectingCall(Node node) {
+  /**
+   * Returns whether evaluating {@code node} invokes arbitrary method or constructor code. Always
+   * false under {@link Assumptions#PURE_CALLS}, which is what makes field facts survive a call.
+   * This governs side effects only; a call's result is unconstrained either way.
+   */
+  private boolean isPotentiallySideEffectingCall(Node node) {
+    if (assumptions.pureCalls()) {
+      return false;
+    }
     return node instanceof MethodInvocationNode || node instanceof ObjectCreationNode;
   }
 
@@ -745,6 +890,12 @@ public final class DemandDrivenNullnessAnalysis {
     if (node instanceof ObjectCreationNode
         || node instanceof ArrayCreationNode
         || node instanceof StringLiteralNode) {
+      return FALSE;
+    }
+    if (node instanceof MethodInvocationNode invocation
+        && assumptions.assumesNonNullReturn(invocation.getTarget().getMethod())) {
+      // The caller has claimed this method never returns null, so its result is not an
+      // unconstrained value but a definitely non-null one.
       return FALSE;
     }
     return atom(new OpaqueAtom(node.getUid()));

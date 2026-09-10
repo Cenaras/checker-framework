@@ -11,7 +11,10 @@ import com.sun.source.util.TreePathScanner;
 import com.sun.source.util.Trees;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.annotation.processing.SupportedOptions;
@@ -89,7 +92,9 @@ import org.checkerframework.javacutil.TreeUtils;
   DemandDrivenNullnessChecker.EXPRESSION_OPTION,
   DemandDrivenNullnessChecker.EXPRESSION_POSITION_OPTION,
   DemandDrivenNullnessChecker.PARAMETER_OPTION,
-  DemandDrivenNullnessChecker.PARAMETER_VALUE_OPTION
+  DemandDrivenNullnessChecker.PARAMETER_VALUE_OPTION,
+  DemandDrivenNullnessChecker.ASSUME_PURE_CALLS_OPTION,
+  DemandDrivenNullnessChecker.ASSUME_NON_NULL_RETURN_OPTION
 })
 public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
 
@@ -117,6 +122,28 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
   /** The value of {@link #PARAMETER_OPTION} under which the return guarantee is claimed. */
   public static final String PARAMETER_VALUE_OPTION = "demandDrivenNullnessParameterValue";
 
+  /**
+   * Assume that no method or constructor call mutates a field, so a fact about a field survives a
+   * call. Applies to both queries, and defaults to off.
+   *
+   * <p>This is an assumption about side effects only, and it is not checked. It does not assume
+   * anything about what a call returns: {@code x = foo()} still leaves {@code x} possibly null.
+   */
+  public static final String ASSUME_PURE_CALLS_OPTION = "demandDrivenNullnessAssumePureCalls";
+
+  /**
+   * A comma-separated list of methods to assume never return null, each written {@code
+   * <owner>#<method>} with the owner fully qualified, for example {@code
+   * retrofit2.OkHttpCall#createRawCall}. Applies to both queries, and defaults to empty.
+   *
+   * <p>The assumption is not checked. It covers every overload of that name declared by that owner,
+   * and matches the method the compiler resolved a call to, so an assumption about an
+   * implementation does not reach a call made through an interface. It says nothing about side
+   * effects: use {@link #ASSUME_PURE_CALLS_OPTION} for those.
+   */
+  public static final String ASSUME_NON_NULL_RETURN_OPTION =
+      "demandDrivenNullnessAssumeNonNullReturn";
+
   /** Which of the two queries this invocation verifies. */
   private enum QueryKind {
     /** Is an expression non-null at a source position? */
@@ -135,6 +162,8 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
   private @Nullable Boolean parameterValue;
   private boolean configurationValid;
   private int matchingMethods;
+  private DemandDrivenNullnessAnalysis.Assumptions assumptions =
+      DemandDrivenNullnessAnalysis.Assumptions.NONE;
 
   /** Creates a command-line processor. */
   public DemandDrivenNullnessChecker() {}
@@ -144,6 +173,12 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
     targetClass = requiredOption(CLASS_OPTION);
     targetMethod = requiredOption(METHOD_OPTION);
     boolean targetValid = targetClass != null && targetMethod != null;
+    // Both queries accept this, so it is read before the query kind is selected.
+    assumptions =
+        (flagOption(ASSUME_PURE_CALLS_OPTION)
+                ? DemandDrivenNullnessAnalysis.Assumptions.PURE_CALLS
+                : DemandDrivenNullnessAnalysis.Assumptions.NONE)
+            .withNonNullReturns(methodListOption(ASSUME_NON_NULL_RETURN_OPTION));
 
     if (processingEnv.getOptions().containsKey(PARAMETER_OPTION)) {
       queryKind = QueryKind.RETURNS_NON_NULL_IF;
@@ -310,7 +345,8 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
     // points is safe.
     DemandDrivenNullnessAnalysis.Result result = DemandDrivenNullnessAnalysis.Result.SAFE;
     for (MatchedNode matched : selectedNodes) {
-      if (DemandDrivenNullnessAnalysis.analyzeReference(cfg, matched.node, matched.node)
+      if (DemandDrivenNullnessAnalysis.analyzeReference(
+              cfg, matched.node, matched.node, assumptions)
           != DemandDrivenNullnessAnalysis.Result.SAFE) {
         result = DemandDrivenNullnessAnalysis.Result.UNKNOWN;
         break;
@@ -385,7 +421,8 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
     }
 
     DemandDrivenNullnessAnalysis.Result result =
-        DemandDrivenNullnessAnalysis.analyzeReturnsNonNullIf(cfg, parameterIndex, value);
+        DemandDrivenNullnessAnalysis.analyzeReturnsNonNullIf(
+            cfg, parameterIndex, value, assumptions);
     if (result == DemandDrivenNullnessAnalysis.Result.SAFE) {
       trees.printMessage(
           Diagnostic.Kind.NOTE,
@@ -452,6 +489,59 @@ public final class DemandDrivenNullnessChecker extends BasicTypeProcessor {
             + value
             + "'");
     return -1;
+  }
+
+  /**
+   * Reads an optional comma-separated list of {@code <owner>#<method>} entries. An absent or empty
+   * option is the empty set; an entry that is not in that form is an error, because silently
+   * ignoring it would answer the query under fewer assumptions than the caller asked for.
+   */
+  private Set<String> methodListOption(String name) {
+    String value = processingEnv.getOptions().get(name);
+    if (value == null || value.isBlank()) {
+      return Set.of();
+    }
+    Set<String> methods = new LinkedHashSet<>();
+    for (String entry : value.split(",", -1)) {
+      String trimmed = entry.trim();
+      if (trimmed.isEmpty()) {
+        continue;
+      }
+      int separator = trimmed.indexOf('#');
+      if (separator <= 0
+          || separator != trimmed.lastIndexOf('#')
+          || separator == trimmed.length() - 1) {
+        error(
+            "option -A"
+                + name
+                + " entries must be '<owner>#<method>' with the owner fully qualified, but was '"
+                + trimmed
+                + "'");
+        continue;
+      }
+      methods.add(trimmed);
+    }
+    return methods;
+  }
+
+  /**
+   * Reads an optional boolean flag. An absent option is false; the bare form {@code -Aname} and
+   * {@code -Aname=true} are both true.
+   */
+  private boolean flagOption(String name) {
+    Map<String, String> options = processingEnv.getOptions();
+    if (!options.containsKey(name)) {
+      return false;
+    }
+    String value = options.get(name);
+    if (value == null || value.isEmpty() || "true".equals(value)) {
+      return true;
+    }
+    if ("false".equals(value)) {
+      return false;
+    }
+    error("option -A" + name + " must be 'true' or 'false', but was '" + value + "'");
+    return false;
   }
 
   /** Parses a required {@code true}/{@code false} option, or returns null when it is invalid. */
