@@ -398,6 +398,15 @@ public final class DemandDrivenNullnessAnalysis {
       }
 
       for (Block predecessor : predecessors) {
+        if (path.contains(predecessor)) {
+          // Traversing to a block already on this path closes a loop, and iterations are not
+          // modelled. The edge must be rejected before it is tested: a loop condition is a single
+          // node, so the atom recorded when the loop was left is the same atom the body edge
+          // requires, and conjoining them yields a contradiction between two distinct evaluations
+          // of that condition. Testing first would discharge the edge and report a dereference the
+          // loop body can still reach as safe.
+          return false;
+        }
         // AND the current formula with the condition required to traverse from predecessor -->
         // successor. For non-conditional blocks, this is the trivial tautology formula
         PropositionalFormula predecessorFormula = and(current, edgeCondition(predecessor, block));

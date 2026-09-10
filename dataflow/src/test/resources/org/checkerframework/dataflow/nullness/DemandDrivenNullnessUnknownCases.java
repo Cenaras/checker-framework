@@ -105,6 +105,42 @@ class DemandDrivenNullnessUnknownCases {
     x.foo();
   }
 
+  // `condition` above is a local, so the atom standing for it is discarded when the body writes
+  // it. A comparison is not: `i < limit` is one unmodelled expression, and `i++` does not disturb
+  // the atom standing for it. The loop body nulls `x`, so the dereference is reachable with
+  // `x == null`.
+  void counterGuardedLoopIsUnsupported(Box x, int limit) {
+    if (x == null) {
+      return;
+    }
+    for (int i = 0; i < limit; i++) {
+      x = null;
+    }
+    x.foo();
+  }
+
+  // The strongest form: the loop runs, so `x` is null at the dereference on every execution.
+  void alwaysNullingLoopIsUnsupported(Box x) {
+    if (x == null) {
+      return;
+    }
+    for (int i = 0; i < 3; i++) {
+      x = null;
+    }
+    x.foo();
+  }
+
+  // A call re-evaluated on each iteration is unmodelled in the same way as a comparison.
+  void callGuardedLoopIsUnsupported(Box x) {
+    if (x == null) {
+      return;
+    }
+    while (possiblyMutateFields()) {
+      x = null;
+    }
+    x.foo();
+  }
+
   void fieldChangedByCall() {
     if (field != null) {
       arbitraryCall();

@@ -80,6 +80,21 @@ public class DemandDrivenNullnessUnknownTest extends DemandDrivenNullnessTestSup
   }
 
   @Test
+  public void counterGuardedLoopIsUnsupported() throws URISyntaxException {
+    assertUnknown("counterGuardedLoopIsUnsupported", "foo");
+  }
+
+  @Test
+  public void alwaysNullingLoopIsUnsupported() throws URISyntaxException {
+    assertUnknown("alwaysNullingLoopIsUnsupported", "foo");
+  }
+
+  @Test
+  public void callGuardedLoopIsUnsupported() throws URISyntaxException {
+    assertUnknown("callGuardedLoopIsUnsupported", "foo");
+  }
+
+  @Test
   public void fieldChangedByCall() throws URISyntaxException {
     assertUnknown("fieldChangedByCall", "foo");
   }
