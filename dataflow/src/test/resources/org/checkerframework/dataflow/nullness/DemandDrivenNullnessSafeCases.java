@@ -9,6 +9,7 @@ class DemandDrivenNullnessSafeCases {
 
   static class Holder {
     Box value;
+    Box other;
   }
 
   Box futureField;
@@ -243,6 +244,32 @@ class DemandDrivenNullnessSafeCases {
     if (holder.value != null) {
       Holder alias = holder;
       alias.value.foo();
+    }
+  }
+
+  // `objectField` is a different field element from `futureField`, so it names a different
+  // location on every object, however the two receivers alias.
+  void otherFieldWriteOnSameReceiver() {
+    if (futureField != null) {
+      this.objectField = null;
+      futureField.foo();
+    }
+  }
+
+  // The same, written through a different receiver of the same type: `first` may well be
+  // `second`, but `other` is still not `value`.
+  void otherFieldWriteThroughOtherReceiver(Holder first, Holder second) {
+    if (second.value != null) {
+      first.other = null;
+      second.value.foo();
+    }
+  }
+
+  // The write is an operand of the guard rather than a statement, which invalidates through
+  // havocWritesWithin instead of the assignment transfer.
+  void otherFieldWriteInsideCondition(Holder holder, Box replacement) {
+    if (holder.value != null && (holder.other = replacement) == null) {
+      holder.value.foo();
     }
   }
 

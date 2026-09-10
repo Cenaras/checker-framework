@@ -120,6 +120,11 @@ public class DemandDrivenNullnessUnknownTest extends DemandDrivenNullnessTestSup
   }
 
   @Test
+  public void possiblyAliasedIntermediateFieldWrite() throws URISyntaxException {
+    assertUnknown("possiblyAliasedIntermediateFieldWrite", "foo");
+  }
+
+  @Test
   public void conjunctionFailure() throws URISyntaxException {
     assertUnknown("conjunctionFailure", "foo");
   }

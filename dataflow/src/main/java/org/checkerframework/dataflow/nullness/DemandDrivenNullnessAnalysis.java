@@ -545,8 +545,11 @@ public final class DemandDrivenNullnessAnalysis {
       return atom(new PredicateAtom(predicateAtom.predicateKind, rewritten));
     }
 
-    if (lhsTargetReference instanceof FieldReference && atomReference.containsFieldAccess()) {
-      // Receiver aliasing is not tracked for arbitrary field writes.
+    if (lhsTargetReference instanceof FieldReference lhsField
+        && atomReference.readsField(lhsField.field())) {
+      // Receiver aliasing is not tracked, so a write to this field may be a write to the one the
+      // atom reads. Only paths that read the assigned field are at risk: two distinct field
+      // elements are distinct locations on every object, whatever the receivers denote.
       return freshAtom();
     }
 
@@ -555,12 +558,26 @@ public final class DemandDrivenNullnessAnalysis {
 
   /** Invalidates all facts involving fields across a possibly side-effecting method invocation. */
   private PropositionalFormula havocFields(PropositionalFormula formula) {
+    return havocFields(formula, null);
+  }
+
+  /**
+   * Invalidates facts about field access paths.
+   *
+   * @param field the written field, whose readers may have been aliased; null to invalidate every
+   *     path that reads any field, which is what an arbitrary call or an unrepresentable write
+   *     requires
+   */
+  private PropositionalFormula havocFields(
+      PropositionalFormula formula, @Nullable VariableElement field) {
     Map<Object, PropositionalFormula> replacements = new HashMap<>();
     return substitute(
         formula,
         key -> {
           if (key instanceof PredicateAtom predicateAtom
-              && predicateAtom.reference.containsFieldAccess()) {
+              && (field == null
+                  ? predicateAtom.reference.containsFieldAccess()
+                  : predicateAtom.reference.readsField(field))) {
             return replacements.computeIfAbsent(key, unused -> freshAtom());
           }
           return atom(key);
@@ -582,10 +599,14 @@ public final class DemandDrivenNullnessAnalysis {
       return formula;
     }
     Reference target = createSymbolReference(assignment.getTarget());
-    if (target == null || target instanceof FieldReference) {
-      // As in replacementForAssignment: a field write, or a write whose target cannot be
-      // represented, may alias any represented field access.
+    if (target == null) {
+      // A write whose target cannot be represented may alias any represented field access.
       return havocFields(formula);
+    }
+    if (target instanceof FieldReference field) {
+      // As in replacementForAssignment: the receivers may alias, so this reaches every path that
+      // reads the same field, and no other.
+      return havocFields(formula, field.field());
     }
     Map<Object, PropositionalFormula> replacements = new HashMap<>();
     return substitute(
@@ -809,6 +830,13 @@ public final class DemandDrivenNullnessAnalysis {
     Reference replaceSubreferenceWith(Reference from, Reference to);
 
     boolean containsFieldAccess();
+
+    /**
+     * Returns whether reading this access path reads {@code field}, at any position in the path.
+     * Writing a field can only change what this path denotes if the path reads that field: either
+     * as the value itself, or as a receiver on the way to it.
+     */
+    boolean readsField(VariableElement field);
   }
 
   private record VariableReference(VariableElement element) implements Reference {
@@ -825,6 +853,11 @@ public final class DemandDrivenNullnessAnalysis {
 
     @Override
     public boolean containsFieldAccess() {
+      return false;
+    }
+
+    @Override
+    public boolean readsField(VariableElement field) {
       return false;
     }
   }
@@ -845,6 +878,11 @@ public final class DemandDrivenNullnessAnalysis {
 
     @Override
     public boolean containsFieldAccess() {
+      return false;
+    }
+
+    @Override
+    public boolean readsField(VariableElement field) {
       return false;
     }
   }
@@ -868,6 +906,13 @@ public final class DemandDrivenNullnessAnalysis {
     @Override
     public boolean containsFieldAccess() {
       return true;
+    }
+
+    @Override
+    public boolean readsField(VariableElement other) {
+      // The receiver counts: a write to `p.b` can change what `a.b.c` denotes, because it may be
+      // the very `a.b` this path reads on the way to `c`.
+      return field.equals(other) || (receiver != null && receiver.readsField(other));
     }
   }
 

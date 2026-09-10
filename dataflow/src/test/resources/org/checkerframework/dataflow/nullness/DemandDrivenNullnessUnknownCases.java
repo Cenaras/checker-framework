@@ -5,6 +5,11 @@ class DemandDrivenNullnessUnknownCases {
 
   static class Holder {
     Box value;
+    Box other;
+  }
+
+  static class Nest {
+    Holder holder;
   }
 
   Box field;
@@ -172,6 +177,16 @@ class DemandDrivenNullnessUnknownCases {
     if (second.value != null) {
       first.value = null;
       second.value.foo();
+    }
+  }
+
+  // The write names a field the guarded path reads as a *receiver*, not as its value. If `first`
+  // is `second`, `second.holder` is now a different object and the guard says nothing about the
+  // `value` of that one.
+  void possiblyAliasedIntermediateFieldWrite(Nest first, Nest second) {
+    if (second.holder.value != null) {
+      first.holder = null;
+      second.holder.value.foo();
     }
   }
 

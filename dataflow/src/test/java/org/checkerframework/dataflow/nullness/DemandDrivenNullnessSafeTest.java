@@ -153,6 +153,21 @@ public class DemandDrivenNullnessSafeTest extends DemandDrivenNullnessTestSuppor
   }
 
   @Test
+  public void otherFieldWriteOnSameReceiver() throws URISyntaxException {
+    assertSafe("otherFieldWriteOnSameReceiver", "foo");
+  }
+
+  @Test
+  public void otherFieldWriteThroughOtherReceiver() throws URISyntaxException {
+    assertSafe("otherFieldWriteThroughOtherReceiver", "foo");
+  }
+
+  @Test
+  public void otherFieldWriteInsideCondition() throws URISyntaxException {
+    assertSafe("otherFieldWriteInsideCondition", "foo");
+  }
+
+  @Test
   public void nestedCastReceiver() throws URISyntaxException {
     assertSafe("nestedCastReceiver", "foo");
   }
