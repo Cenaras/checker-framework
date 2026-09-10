@@ -1,3 +1,3 @@
 package org.slf4j;
-public class InfoReturnType {
-}
+
+public class InfoReturnType {}

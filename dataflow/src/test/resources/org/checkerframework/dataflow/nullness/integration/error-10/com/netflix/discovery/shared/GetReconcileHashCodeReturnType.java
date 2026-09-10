@@ -1,3 +1,3 @@
 package com.netflix.discovery.shared;
-public class GetReconcileHashCodeReturnType {
-}
+
+public class GetReconcileHashCodeReturnType {}

@@ -4,9 +4,7 @@ import javax.annotation.Nullable;
 
 public interface ResponseCache {
 
-  @Nullable
-  String get(Key key);
+  @Nullable String get(Key key);
 
-  @Nullable
-  byte[] getGZIP(Key key);
+  @Nullable byte[] getGZIP(Key key);
 }

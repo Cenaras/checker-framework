@@ -1,3 +1,3 @@
 package javax.ws.rs.core;
-public class UriInfo {
-}
+
+public class UriInfo {}

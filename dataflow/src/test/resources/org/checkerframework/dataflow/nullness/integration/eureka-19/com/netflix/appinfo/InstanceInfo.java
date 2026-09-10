@@ -1,3 +1,3 @@
 package com.netflix.appinfo;
-public class InstanceInfo {
-}
+
+public class InstanceInfo {}

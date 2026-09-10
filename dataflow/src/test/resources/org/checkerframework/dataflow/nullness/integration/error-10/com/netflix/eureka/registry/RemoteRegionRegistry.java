@@ -34,8 +34,7 @@ public class RemoteRegionRegistry implements LookupService<String> {
     return false;
   }
 
-  @Nullable
-  private Applications fetchRemoteRegistry(boolean delta) {
+  @Nullable private Applications fetchRemoteRegistry(boolean delta) {
     throw new java.lang.Error();
   }
 

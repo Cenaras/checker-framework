@@ -6,13 +6,11 @@ public class ResponseCacheImpl implements ResponseCache {
 
   public static final String ALL_APPS_DELTA = null;
 
-  @Nullable
-  public String get(final Key key) {
+  @Nullable public String get(final Key key) {
     throw new java.lang.Error();
   }
 
-  @Nullable
-  public byte[] getGZIP(Key key) {
+  @Nullable public byte[] getGZIP(Key key) {
     throw new java.lang.Error();
   }
 }
